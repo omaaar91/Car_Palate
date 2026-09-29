@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Large Datasets & Compressed Archives
+archive/
+archive.zip
+*.zip
+*.tar.gz
+*.rar
+
+# SSL Certificates & Private Keys (Auto-generated locally by run_smart_scanner.py)
+cert.pem
+key.pem
+
+# Media outputs and caches
+output_*.mp4
+.tempmediaStorage/
+.system_generated/
+
+# Environment & IDE
+.env
+.venv/
+env/
+.vscode/
+.idea/

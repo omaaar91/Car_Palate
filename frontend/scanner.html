@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>🚗 كاشف اللوحات اللحظي المباشر - Live AR Scanner</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Cairo', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+        }
+
+        /* حاوية الفيديو والشاشة الكاملة */
+        .camera-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+        }
+
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* شريط التحكم العلوي */
+        .top-bar {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            right: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 20;
+        }
+
+        .status-badge {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #4ade80;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            background: #22c55e;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+            70% { transform: scale(1.1); box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+
+        .flip-btn {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        /* شبكة التصويب السينمائية */
+        .reticle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 280px;
+            height: 160px;
+            border: 2px dashed rgba(56, 189, 248, 0.35);
+            border-radius: 12px;
+            pointer-events: none;
+            z-index: 12;
+            transition: all 0.3s ease;
+        }
+
+        .reticle.locked {
+            border: 2px solid #22c55e;
+            box-shadow: 0 0 25px rgba(34, 197, 94, 0.4);
+        }
+
+        /* بطاقة عرض اللوحة المقروءة أسفل الشاشة */
+        .bottom-card {
+            position: absolute;
+            bottom: 24px;
+            left: 16px;
+            right: 16px;
+            background: rgba(15, 23, 42, 0.88);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 2px solid rgba(56, 189, 248, 0.4);
+            border-radius: 20px;
+            padding: 16px 20px;
+            text-align: center;
+            z-index: 20;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            transition: all 0.3s ease;
+        }
+
+        .plate-label {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            font-weight: 600;
+            margin-bottom: 2px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .plate-display {
+            font-size: 2.1rem;
+            font-weight: 900;
+            color: #f8fafc;
+            letter-spacing: 2px;
+            text-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
+            min-height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .fps-badge {
+            font-size: 0.75rem;
+            color: #38bdf8;
+            background: rgba(56, 189, 248, 0.15);
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+
+        /* نافذة طلب الإذن وبدء الكاميرا */
+        .start-modal {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #090d16;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            text-align: center;
+            z-index: 100;
+        }
+        .start-modal h2 {
+            color: #fff;
+            font-size: 1.6rem;
+            margin-bottom: 10px;
+            font-weight: 800;
+        }
+        .start-modal p {
+            color: #94a3b8;
+            font-size: 0.95rem;
+            margin-bottom: 25px;
+            line-height: 1.6;
+        }
+        .start-btn {
+            background: linear-gradient(135deg, #2563eb, #38bdf8);
+            color: white;
+            border: none;
+            padding: 14px 36px;
+            border-radius: 30px;
+            font-size: 1.15rem;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- نافذة البدء وتفعيل الكاميرا -->
+    <div class="start-modal" id="startModal">
+        <div style="font-size: 3.5rem; margin-bottom: 12px;">🚗</div>
+        <h2>كاشف اللوحات اللحظي المباشر</h2>
+        <p>وجّه كاميرا هاتفك نحو أي سيارة، وسيقوم الذكاء الاصطناعي برصد اللوحة وقراءة الحروف والأرقام مباشرة في نفس اللحظة.</p>
+        <button class="start-btn" id="startBtn">تشغيل الكاميرا الحية 📸</button>
+    </div>
+
+    <div class="camera-container">
+        <!-- شريط التحكم العلوي -->
+        <div class="top-bar">
+            <div class="status-badge" id="statusBadge">
+                <div class="pulse-dot"></div>
+                <span id="statusText">جاري المسح اللحظي...</span>
+            </div>
+            <button class="flip-btn" id="flipBtn" title="تبديل الكاميرا">🔄</button>
+        </div>
+
+        <!-- شبكة التصويب -->
+        <div class="reticle" id="reticle"></div>
+
+        <!-- تغذية الفيديو الأصلية من كاميرا الآيفون -->
+        <video id="video" autoplay playsinline muted></video>
+
+        <!-- طبقة الـ Canvas لرسم الصناديق المتتبعة فوق الفيديو -->
+        <canvas id="overlay"></canvas>
+
+        <!-- بطاقة النتيجة الحية في الأسفل -->
+        <div class="bottom-card">
+            <div class="plate-label">
+                <span>اللوحة المرصودة حالياً</span>
+                <span class="fps-badge" id="fpsDisplay">-- FPS</span>
+            </div>
+            <div class="plate-display" id="plateDisplay">وجّه الكاميرا للوحة...</div>
+        </div>
+    </div>
+
+    <!-- كانفاس غير مرئي لضغط وقص الفريمات وإرسالها للسيرفر -->
+    <canvas id="captureCanvas" style="display: none;"></canvas>
+
+    <script>
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const ctx = overlay.getContext('2d');
+        const captureCanvas = document.getElementById('captureCanvas');
+        const captureCtx = captureCanvas.getContext('2d');
+        
+        const plateDisplay = document.getElementById('plateDisplay');
+        const fpsDisplay = document.getElementById('fpsDisplay');
+        const statusText = document.getElementById('statusText');
+        const reticle = document.getElementById('reticle');
+        const startModal = document.getElementById('startModal');
+        const startBtn = document.getElementById('startBtn');
+        const flipBtn = document.getElementById('flipBtn');
+
+        let ws = null;
+        let isProcessing = false;
+        let currentFacingMode = "environment"; // الكاميرا الخلفية تلقائياً
+        let lastDetectedTime = 0;
+
+        // مطابقة أبعاد الكانفاس لحجم الشاشة
+        function resizeOverlay() {
+            overlay.width = window.innerWidth;
+            overlay.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeOverlay);
+        resizeOverlay();
+
+        // تشغيل تدفق الكاميرا الحية
+        async function startCamera() {
+            try {
+                if (video.srcObject) {
+                    video.srcObject.getTracks().forEach(track => track.stop());
+                }
+                const constraints = {
+                    video: {
+                        facingMode: currentFacingMode,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                };
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                await video.play();
+                startModal.style.display = 'none';
+                connectWebSocket();
+            } catch (err) {
+                alert("❌ تعذر الوصول للكاميرا: " + err.message + "\nتأكد من السماح بالوصول للكاميرا في إعدادات المتصفح.");
+            }
+        }
+
+        // الاتصال بـ WebSocket السريع
+        function connectWebSocket() {
+            const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${proto}//${window.location.host}/ws/scanner`;
+            
+            statusText.innerText = "جاري الاتصال بالسيرفر...";
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                statusText.innerText = "متصل - جاري المسح اللحظي 🟢";
+                requestAnimationFrame(streamLoop);
+            };
+
+            ws.onmessage = (event) => {
+                isProcessing = false;
+                try {
+                    const data = JSON.parse(event.data);
+                    handleDetectionResult(data);
+                } catch (e) {
+                    console.error("خطأ في معالجة النتيجة:", e);
+                }
+            };
+
+            ws.onclose = () => {
+                statusText.innerText = "انقطع الاتصال، جاري إعادة المحاولة...";
+                setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onerror = (err) => {
+                console.error("WS Error:", err);
+            };
+        }
+
+        // حلقة إرسال الفريمات بسرعة فائقة (بدون تأخير)
+        function streamLoop() {
+            if (video.readyState === video.HAVE_ENOUGH_DATA && !isProcessing && ws && ws.readyState === WebSocket.OPEN) {
+                isProcessing = true;
+                
+                // تصغير حجم الإرسال لـ 480x320 لتحقيق أعلى سرعة فريمات (Real-Time)
+                const sendW = 480;
+                const sendH = Math.round(video.videoHeight * (sendW / video.videoWidth)) || 320;
+                captureCanvas.width = sendW;
+                captureCanvas.height = sendH;
+                
+                captureCtx.drawImage(video, 0, 0, sendW, sendH);
+                const dataUrl = captureCanvas.toDataURL('image/jpeg', 0.65);
+                ws.send(dataUrl);
+            }
+            requestAnimationFrame(streamLoop);
+        }
+
+        // رسم النتائج والصناديق التتبعية فوق الكاميرا الحية
+        function handleDetectionResult(data) {
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+            if (data.fps) {
+                fpsDisplay.innerText = `${data.fps} FPS`;
+            }
+
+            if (data.success && data.plates && data.plates.length > 0) {
+                reticle.classList.add('locked');
+                lastDetectedTime = Date.now();
+                
+                // حساب معامل التكبير بين الفريم المرسل وأبعاد الشاشة الفعلية
+                const scaleX = overlay.width / data.frame_w;
+                const scaleY = overlay.height / data.frame_h;
+
+                data.plates.forEach(plate => {
+                    const [x1, y1, x2, y2] = plate.bbox;
+                    const bx = x1 * scaleX;
+                    const by = y1 * scaleY;
+                    const bw = (x2 - x1) * scaleX;
+                    const bh = (y2 - y1) * scaleY;
+
+                    // 1. رسم مستطيل اللوحة النيوني مع زوايا مضيئة
+                    ctx.strokeStyle = '#22c55e';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(bx, by, bw, bh);
+
+                    // تأثير الزوايا المتوهجة (HUD Corners)
+                    ctx.fillStyle = '#4ade80';
+                    const cLen = Math.min(bw, bh) * 0.25;
+                    ctx.fillRect(bx, by, cLen, 4);
+                    ctx.fillRect(bx, by, 4, cLen);
+                    ctx.fillRect(bx + bw - cLen, by, cLen, 4);
+                    ctx.fillRect(bx + bw - 4, by, 4, cLen);
+                    ctx.fillRect(bx, by + bh - 4, cLen, 4);
+                    ctx.fillRect(bx, by + bh - cLen, 4, cLen);
+                    ctx.fillRect(bx + bw - cLen, by + bh - 4, cLen, 4);
+                    ctx.fillRect(bx + bw - 4, by + bh - cLen, 4, cLen);
+
+                    // 2. رسم شريط القراءة فوق اللوحة مباشرة
+                    const textLabel = plate.text || "Plate";
+                    ctx.font = "bold 18px Cairo";
+                    const tWidth = ctx.measureText(textLabel).width;
+                    
+                    ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+                    ctx.fillRect(bx, Math.max(0, by - 32), tWidth + 16, 28);
+                    
+                    ctx.fillStyle = "#38bdf8";
+                    ctx.fillText(textLabel, bx + 8, Math.max(20, by - 12));
+
+                    // تحديث البطاقة الكبيرة في الأسفل
+                    plateDisplay.innerText = textLabel;
+                    plateDisplay.style.color = "#4ade80";
+                });
+            } else {
+                // إذا لم يتم رصد لوحة لمدة تزيد عن ثانية
+                if (Date.now() - lastDetectedTime > 1200) {
+                    reticle.classList.remove('locked');
+                    plateDisplay.innerText = "وجّه الكاميرا للوحة...";
+                    plateDisplay.style.color = "#f8fafc";
+                }
+            }
+        }
+
+        // زر البدء
+        startBtn.addEventListener('click', startCamera);
+
+        // زر تبديل الكاميرا (الأمامية / الخلفية)
+        flipBtn.addEventListener('click', () => {
+            currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+            startCamera();
+        });
+    </script>
+</body>
+</html>

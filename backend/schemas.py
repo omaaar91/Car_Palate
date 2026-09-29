@@ -1,0 +1,24 @@
+from typing import List, Optional
+from pydantic import BaseModel
+
+class CharBoxDetail(BaseModel):
+    box: List[int]
+    class_name: Optional[str] = None
+    arabic: Optional[str] = None
+    is_digit: bool
+
+class PlateResult(BaseModel):
+    text: str
+    digits: List[str]
+    letters: List[str]
+    confidence: float
+    bbox: List[int]
+    angle: float
+    char_details: Optional[List[CharBoxDetail]] = None
+
+class ALPRResponse(BaseModel):
+    success: bool
+    plates_count: int
+    plates: List[PlateResult]
+    annotated_image_base64: Optional[str] = None
+    message: str = "Success"
