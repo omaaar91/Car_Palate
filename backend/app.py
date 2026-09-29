@@ -98,7 +98,11 @@ async def predict_image(
             confidence=p["confidence"],
             bbox=p["bbox"],
             angle=p["angle"],
-            char_details=p.get("char_details")
+            char_details=p.get("char_details"),
+            syntax_valid=p.get("syntax_valid"),
+            governorate=p.get("governorate"),
+            format_code=p.get("format_code"),
+            badge=p.get("badge")
         ))
 
     return ALPRResponse(
@@ -149,6 +153,94 @@ def get_scanner_page():
         return FileResponse(scanner_path)
     return Response(content="<h1>Scanner page not found</h1>", media_type="text/html", status_code=404)
 
+from collections import deque, Counter
+
+class TemporalPlateStabilizer:
+    """
+    نظام التصويت والتثبيت الزمني التراكمي (Multi-Frame Temporal Voting)
+    يجمع قراءات الفريمات المتتالية لنفس اللوحة لتثبيت الحروف ومنع الرعشة والالتباس العشوائي
+    """
+    def __init__(self, history_len: int = 6):
+        self.history_len = history_len
+        self.tracks = {}
+        self.last_seen = {}
+
+    def update(self, plates: list, curr_time: float) -> list:
+        # تنظيف اللوحات التي اختفت لأكثر من 1.8 ثانية
+        expired = [tid for tid, t in self.last_seen.items() if curr_time - t > 1.8]
+        for tid in expired:
+            del self.tracks[tid]
+            del self.last_seen[tid]
+
+        stabilized_plates = []
+        for p in plates:
+            bx1, by1, bx2, by2 = p["bbox"]
+            bcx, bcy = (bx1 + bx2) / 2.0, (by1 + by2) / 2.0
+
+            # ربط اللوحة بأقرب مسار سابق عبر المسافة المكانية
+            matched_tid = None
+            min_dist = float("inf")
+            for tid, hist in self.tracks.items():
+                if not hist: continue
+                last_p = hist[-1]
+                lx1, ly1, lx2, ly2 = last_p["bbox"]
+                lcx, lcy = (lx1 + lx2) / 2.0, (ly1 + ly2) / 2.0
+                dist = ((bcx - lcx)**2 + (bcy - lcy)**2)**0.5
+                if dist < 85 and dist < min_dist:
+                    min_dist = dist
+                    matched_tid = tid
+
+            if matched_tid is None:
+                matched_tid = f"tr_{int(curr_time*1000)%10000}_{len(self.tracks)}"
+                self.tracks[matched_tid] = deque(maxlen=self.history_len)
+
+            self.last_seen[matched_tid] = curr_time
+            self.tracks[matched_tid].append(p)
+
+            # التصويت بالأغلبية مع إعطاء الأولوية للوحات المطابقة للقواعد المرورية المصرية
+            hist = self.tracks[matched_tid]
+            valid_hist = [h for h in hist if h.get("text") and "?" not in h.get("text")]
+            
+            # إذا وجدت قراءات مطابقة قانونياً (syntax_valid == True)، يتم التصويت ضمنها أولاً
+            legal_hist = [h for h in valid_hist if h.get("syntax_valid") is True]
+            vote_pool = legal_hist if legal_hist else valid_hist
+
+            if vote_pool:
+                text_counts = Counter(h["text"] for h in vote_pool)
+                stable_text = text_counts.most_common(1)[0][0]
+                
+                # تجميع الأرقام والحروف الأكثر تكراراً
+                all_digits = [h["digits"] for h in vote_pool if h["digits"]]
+                all_letters = [h["letters"] for h in vote_pool if h["letters"]]
+                stable_digits = Counter(tuple(d) for d in all_digits).most_common(1)[0][0] if all_digits else p["digits"]
+                stable_letters = Counter(tuple(l) for l in all_letters).most_common(1)[0][0] if all_letters else p["letters"]
+                
+                sample_item = next((h for h in vote_pool if h["text"] == stable_text), vote_pool[0])
+                stable_syntax = sample_item.get("syntax_valid", False)
+                stable_gov = sample_item.get("governorate", "غير محدد")
+                stable_badge = sample_item.get("badge", "")
+            else:
+                stable_text = p["text"]
+                stable_digits = p["digits"]
+                stable_letters = p["letters"]
+                stable_syntax = p.get("syntax_valid", False)
+                stable_gov = p.get("governorate", "غير محدد")
+                stable_badge = p.get("badge", "")
+
+            stabilized_plates.append({
+                "text": stable_text if stable_text else p["text"],
+                "digits": list(stable_digits),
+                "letters": list(stable_letters),
+                "bbox": p["bbox"],
+                "conf": p["conf"],
+                "is_stabilized": len(vote_pool) >= 2,
+                "syntax_valid": stable_syntax,
+                "governorate": stable_gov,
+                "badge": stable_badge
+            })
+
+        return stabilized_plates
+
 # =============================================================
 # نقطة نهاية الـ WebSocket للكاميرا الحية المباشرة الفورية
 # =============================================================
@@ -156,6 +248,7 @@ def get_scanner_page():
 async def websocket_scanner(websocket: WebSocket):
     await websocket.accept()
     engine = get_alpr_engine()
+    stabilizer = TemporalPlateStabilizer(history_len=6)
     fps_counter = 0
     t0 = time.time()
     try:
@@ -177,18 +270,29 @@ async def websocket_scanner(websocket: WebSocket):
 
             h, w = frame.shape[:2]
             p_res = engine.plate_model(frame, conf=0.35, verbose=False)[0]
-            plates = []
+            raw_plates = []
             for b in p_res.boxes:
                 x1, y1, x2, y2 = map(int, b.xyxy[0])
+                bw, bh = x2 - x1, y2 - y1
+                # تجاهل الصناديق متناهية الصغر التي تسبب تشويشاً
+                if bw < 42 or bh < 14:
+                    continue
                 crop = frame[y1:y2, x1:x2]
                 rec = engine.recognize_plate_crop(crop)
-                plates.append({
+                raw_plates.append({
                     "text": rec["text"],
                     "digits": rec["digits"],
                     "letters": rec["letters"],
                     "bbox": [x1, y1, x2, y2],
-                    "conf": round(float(b.conf[0]), 2)
+                    "conf": round(float(b.conf[0]), 2),
+                    "syntax_valid": rec.get("syntax_valid", False),
+                    "governorate": rec.get("governorate", "غير محدد"),
+                    "badge": rec.get("badge", "")
                 })
+
+            # تطبيق التثبيت والتصويت الزمني عبر الفريمات المتتالية
+            curr_t = time.time()
+            plates = stabilizer.update(raw_plates, curr_t)
 
             fps_counter += 1
             elapsed = time.time() - t0

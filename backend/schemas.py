@@ -15,6 +15,10 @@ class PlateResult(BaseModel):
     bbox: List[int]
     angle: float
     char_details: Optional[List[CharBoxDetail]] = None
+    syntax_valid: Optional[bool] = None
+    governorate: Optional[str] = None
+    format_code: Optional[str] = None
+    badge: Optional[str] = None
 
 class ALPRResponse(BaseModel):
     success: bool

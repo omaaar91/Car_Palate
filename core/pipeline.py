@@ -8,7 +8,13 @@ from core.config import (
     PLATE_CONF, LOC_CONF, RECOG_CONF, SCALE_FACTOR
 )
 from core.deskew import deskew_adaptive
-from core.verification import verify_digit_geometry, verify_letter_geometry
+from core.verification import (
+    validate_egyptian_syntax, 
+    prune_spurious_boxes, 
+    resolve_split_index, 
+    verify_digit_geometry, 
+    verify_letter_geometry
+)
 
 class EgyptianALPR:
     """
@@ -33,7 +39,11 @@ class EgyptianALPR:
         crop_rot, angle = deskew_adaptive(crop)
         h, w = crop_rot.shape[:2]
         if h < 10 or w < 20:
-            return {"text": "", "digits": [], "letters": [], "annotated": crop_rot, "angle": angle}
+            return {
+                "text": "", "digits": [], "letters": [], "char_details": [], 
+                "annotated": crop_rot, "angle": angle,
+                "syntax_valid": False, "governorate": "غير محدد", "format_code": "", "badge": ""
+            }
 
         # 1. الدقة الفائقة بهندسة Lanczos4
         pass1 = cv2.resize(crop_rot, (int(w * SCALE_FACTOR), int(h * SCALE_FACTOR)), interpolation=cv2.INTER_LANCZOS4)
@@ -55,7 +65,11 @@ class EgyptianALPR:
             clean_b.append(bx)
 
         if not clean_b:
-            return {"text": "", "digits": [], "letters": [], "annotated": pass1, "angle": angle}
+            return {
+                "text": "", "digits": [], "letters": [], "char_details": [], 
+                "annotated": pass1, "angle": angle,
+                "syntax_valid": False, "governorate": "غير محدد", "format_code": "", "badge": ""
+            }
 
         # 3. الموديل الثالث: كشف متعدد المقاييس مع تطبيق الأوزان القبلية
         c1 = self.recog_model(pass1, conf=RECOG_CONF, verbose=False)[0]
@@ -68,14 +82,9 @@ class EgyptianALPR:
             coords = [float(cb.xyxy[0][0])/scale2, float(cb.xyxy[0][1])/scale2, float(cb.xyxy[0][2])/scale2, float(cb.xyxy[0][3])/scale2]
             candidates.append((coords, self.recog_model.names[int(cb.cls[0])], float(cb.conf[0]) * 0.95))
 
-        n = len(clean_b)
-        if n >= 7: split_idx = 3
-        elif n == 6:
-            g2 = clean_b[3][0] - clean_b[2][2]
-            g3 = clean_b[4][0] - clean_b[3][2]
-            split_idx = 2 if g2 > g3 else 3
-        elif n == 5: split_idx = 2
-        else: split_idx = n // 2
+        # تنقية الصناديق الزائفة وتحديد الفاصل بين الأرقام والحروف وفق الهيكل المروري
+        clean_b = prune_spurious_boxes(clean_b, candidates, pass1.shape[1], pass1.shape[0])
+        split_idx = resolve_split_index(clean_b, candidates)
 
         # مطابقة المرشحين للخانات
         stage1_cands = []
@@ -85,11 +94,15 @@ class EgyptianALPR:
             is_digit = (i <= split_idx)
             best_cand, best_score = None, -1.0
             cands_for_box = []
+            bw = lx2 - lx1
+            lcx = (lx1 + lx2) / 2.0
             for (cx1, cy1, cx2, cy2), cname, raw_c in candidates:
                 inter = max(0, min(lx2, cx2) - max(lx1, cx1))
                 union = max(lx2, cx2) - min(lx1, cx1)
                 iou = inter / union if union > 0 else 0
-                if iou > 0.22:
+                ccx = (cx1 + cx2) / 2.0
+                center_dist = abs(lcx - ccx)
+                if iou > 0.18 or (center_dist < bw * 0.48 and inter > 0):
                     w_c = raw_c * CLASS_WEIGHTS.get(cname, 1.0)
                     if is_digit and cname == 'ain': cname, w_c = '4', raw_c
                     if is_digit and cname == 'alif': cname, w_c = '1', raw_c
@@ -139,16 +152,23 @@ class EgyptianALPR:
             })
 
         num_txt = " ".join(nums)
-        let_txt = " ".join(reversed(lets))
+        rev_lets = list(reversed(lets))
+        let_txt = " ".join(rev_lets)
         full_text = f"[{num_txt}] | [{let_txt}]"
+
+        syntax_info = validate_egyptian_syntax(nums, rev_lets)
 
         return {
             "text": full_text,
             "digits": nums,
-            "letters": list(reversed(lets)),
+            "letters": rev_lets,
             "char_details": char_details,
             "annotated": annotated,
-            "angle": angle
+            "angle": angle,
+            "syntax_valid": syntax_info["is_valid"],
+            "governorate": syntax_info["governorate"],
+            "format_code": syntax_info["format_code"],
+            "badge": syntax_info["badge"]
         }
 
     def process_image(self, image: np.ndarray, add_hud: bool = True) -> dict:
@@ -164,6 +184,9 @@ class EgyptianALPR:
         for box in p_res.boxes:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             conf = float(box.conf[0])
+            bw, bh = x2 - x1, y2 - y1
+            if bw < 42 or bh < 14:
+                continue
             crop = image[y1:y2, x1:x2]
 
             # معالجة تفاصيل اللوحة
@@ -183,7 +206,8 @@ class EgyptianALPR:
                 zoomed = cv2.resize(recog_res["annotated"], (hud_w, hud_h - 45))
                 hud_canvas = np.zeros((hud_h, hud_w, 3), dtype=np.uint8)
                 hud_canvas[:hud_h - 45, :] = zoomed
-                cv2.putText(hud_canvas, "ZOOM (Model 2 Boxes):", (8, hud_h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 0), 1)
+                badge_lbl = recog_res.get("badge", "ZOOM (Model 2 Boxes):")
+                cv2.putText(hud_canvas, badge_lbl, (8, hud_h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 0), 1)
                 cv2.putText(hud_canvas, plate_text, (8, hud_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
                 cv2.rectangle(hud_canvas, (0, 0), (hud_w - 1, hud_h - 1), (0, 255, 0), 2)
 
@@ -198,7 +222,11 @@ class EgyptianALPR:
                 "digits": recog_res["digits"],
                 "letters": recog_res["letters"],
                 "angle": recog_res["angle"],
-                "char_details": recog_res["char_details"]
+                "char_details": recog_res["char_details"],
+                "syntax_valid": recog_res.get("syntax_valid", False),
+                "governorate": recog_res.get("governorate", "غير محدد"),
+                "format_code": recog_res.get("format_code", ""),
+                "badge": recog_res.get("badge", "")
             })
 
         return {

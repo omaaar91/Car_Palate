@@ -176,6 +176,24 @@
             border-radius: 10px;
         }
 
+        .gov-badge {
+            font-size: 0.8rem;
+            color: #38bdf8;
+            background: rgba(56, 189, 248, 0.15);
+            padding: 3px 10px;
+            border-radius: 8px;
+            font-weight: 700;
+            transition: all 0.3s ease;
+        }
+
+        .plate-subdetail {
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-top: 4px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
         /* نافذة طلب الإذن وبدء الكاميرا */
         .start-modal {
             position: absolute;
@@ -246,10 +264,11 @@
         <!-- بطاقة النتيجة الحية في الأسفل -->
         <div class="bottom-card">
             <div class="plate-label">
-                <span>اللوحة المرصودة حالياً</span>
+                <span class="gov-badge" id="plateGovBadge">🚗 جاري المسح...</span>
                 <span class="fps-badge" id="fpsDisplay">-- FPS</span>
             </div>
             <div class="plate-display" id="plateDisplay">وجّه الكاميرا للوحة...</div>
+            <div class="plate-subdetail" id="plateSubDetail">نظام التدقيق الهندسي والقانوني للمرور المصري</div>
         </div>
     </div>
 
@@ -264,6 +283,8 @@
         const captureCtx = captureCanvas.getContext('2d');
         
         const plateDisplay = document.getElementById('plateDisplay');
+        const plateGovBadge = document.getElementById('plateGovBadge');
+        const plateSubDetail = document.getElementById('plateSubDetail');
         const fpsDisplay = document.getElementById('fpsDisplay');
         const statusText = document.getElementById('statusText');
         const reticle = document.getElementById('reticle');
@@ -346,14 +367,14 @@
             if (video.readyState === video.HAVE_ENOUGH_DATA && !isProcessing && ws && ws.readyState === WebSocket.OPEN) {
                 isProcessing = true;
                 
-                // تصغير حجم الإرسال لـ 480x320 لتحقيق أعلى سرعة فريمات (Real-Time)
-                const sendW = 480;
-                const sendH = Math.round(video.videoHeight * (sendW / video.videoWidth)) || 320;
+                // دقة HD عالية الوضوح 720p مع ضغط خفيف 0.82 لإبراز تفاصيل الحروف الدقيقة
+                const sendW = 720;
+                const sendH = Math.round(video.videoHeight * (sendW / video.videoWidth)) || 480;
                 captureCanvas.width = sendW;
                 captureCanvas.height = sendH;
                 
                 captureCtx.drawImage(video, 0, 0, sendW, sendH);
-                const dataUrl = captureCanvas.toDataURL('image/jpeg', 0.65);
+                const dataUrl = captureCanvas.toDataURL('image/jpeg', 0.82);
                 ws.send(dataUrl);
             }
             requestAnimationFrame(streamLoop);
@@ -400,19 +421,32 @@
                     ctx.fillRect(bx + bw - 4, by + bh - cLen, 4, cLen);
 
                     // 2. رسم شريط القراءة فوق اللوحة مباشرة
-                    const textLabel = plate.text || "Plate";
-                    ctx.font = "bold 18px Cairo";
+                    const textLabel = plate.badge || plate.text || "Plate";
+                    ctx.font = "bold 15px Cairo";
                     const tWidth = ctx.measureText(textLabel).width;
                     
-                    ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+                    ctx.fillStyle = plate.syntax_valid ? "rgba(15, 23, 42, 0.9)" : "rgba(30, 20, 10, 0.9)";
                     ctx.fillRect(bx, Math.max(0, by - 32), tWidth + 16, 28);
                     
-                    ctx.fillStyle = "#38bdf8";
+                    ctx.fillStyle = plate.syntax_valid ? "#4ade80" : "#38bdf8";
                     ctx.fillText(textLabel, bx + 8, Math.max(20, by - 12));
 
                     // تحديث البطاقة الكبيرة في الأسفل
-                    plateDisplay.innerText = textLabel;
-                    plateDisplay.style.color = "#4ade80";
+                    if (plate.badge) {
+                        plateGovBadge.innerText = plate.badge;
+                        plateGovBadge.style.color = plate.syntax_valid ? "#4ade80" : "#facc15";
+                        plateGovBadge.style.background = plate.syntax_valid ? "rgba(34, 197, 94, 0.2)" : "rgba(234, 179, 8, 0.2)";
+                    }
+                    if (plate.digits && plate.letters && plate.digits.length > 0) {
+                        const dStr = plate.digits.join(' ');
+                        const lStr = plate.letters.join(' ');
+                        plateDisplay.innerHTML = `<span style="color: #38bdf8;">${dStr}</span> <span style="color: #64748b; margin: 0 10px;">|</span> <span style="color: #4ade80;">${lStr}</span>`;
+                        plateSubDetail.innerText = plate.syntax_valid ? "🟢 لوحة مطابقة 100% للمواصفات المرورية المصرية" : "⚠️ جاري تثبيت وقراءة اللوحة...";
+                        plateSubDetail.style.color = plate.syntax_valid ? "#4ade80" : "#94a3b8";
+                    } else {
+                        plateDisplay.innerText = plate.text || "Plate";
+                        plateDisplay.style.color = "#4ade80";
+                    }
                 });
             } else {
                 // إذا لم يتم رصد لوحة لمدة تزيد عن ثانية
@@ -420,6 +454,11 @@
                     reticle.classList.remove('locked');
                     plateDisplay.innerText = "وجّه الكاميرا للوحة...";
                     plateDisplay.style.color = "#f8fafc";
+                    plateGovBadge.innerText = "🚗 جاري المسح...";
+                    plateGovBadge.style.color = "#38bdf8";
+                    plateGovBadge.style.background = "rgba(56, 189, 248, 0.15)";
+                    plateSubDetail.innerText = "نظام التدقيق الهندسي والقانوني للمرور المصري";
+                    plateSubDetail.style.color = "#64748b";
                 }
             }
         }

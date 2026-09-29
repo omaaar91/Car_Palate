@@ -1,21 +1,24 @@
+import os
+import sys
 import cv2
 import numpy as np
+
+sys.stdout.reconfigure(encoding='utf-8')
+
 from core.config import (
-    CANONICAL_LETTER_MAP, 
-    OFFICIAL_ALLOWED_LETTERS, 
-    CHAR_MAP, 
-    DIGITS_SET
+    PLATE_MODEL_PATH, LOC_MODEL_PATH, RECOG_MODEL_PATH,
+    CHAR_MAP, DIGITS_SET, CLASS_WEIGHTS,
+    OFFICIAL_ALLOWED_LETTERS, CANONICAL_LETTER_MAP,
+    SCALE_FACTOR, LOC_CONF, RECOG_CONF
 )
+from core.deskew import deskew_adaptive
+from ultralytics import YOLO
+
+plate_model = YOLO(PLATE_MODEL_PATH)
+loc_model   = YOLO(LOC_MODEL_PATH)
+recog_model = YOLO(RECOG_MODEL_PATH)
 
 def validate_egyptian_syntax(digits: list, letters: list) -> dict:
-    """
-    التحقق من صحة الهيكل القانوني للوحة المركبة المصرية وفقاً لتعليمات الإدارة العامة للمرور:
-    - القاهرة: 3 أرقام + 3 حروف (إجمالي 6 خانات)
-    - الجيزة: 4 أرقام + 2 حروف (إجمالي 6 خانات)
-    - باقي المحافظات: 4 أرقام + 3 حروف (إجمالي 7 خانات)
-    - استبعاد أي لوحة تحتوي على الرقم 0 (محظور مرورياً)
-    - التحقق من انتماء كافة الحروف إلى الـ 17 حرفاً الرسمية
-    """
     d_count = len(digits)
     l_count = len(letters)
     total = d_count + l_count
@@ -58,11 +61,6 @@ def validate_egyptian_syntax(digits: list, letters: list) -> dict:
     }
 
 def prune_spurious_boxes(clean_b: list, candidates: list, plate_w: int, plate_h: int) -> list:
-    """
-    تنقية الصناديق الزائفة (Spurious Box Pruning):
-    إذا رصد كاشف الخانات أكثر من 7 صناديق (بسبب مسامير التثبيت، الشعار، أو انعكاسات الإطار)،
-    يتم استبعاد الصناديق الأكثر شذوذاً عن الخط الأفقي والأقل ثقة في تصنيف المحارف حتى نصل لـ 7 خانات قانونية كحد أقصى.
-    """
     if len(clean_b) <= 7:
         return clean_b
 
@@ -82,10 +80,7 @@ def prune_spurious_boxes(clean_b: list, candidates: list, plate_w: int, plate_h:
             bh = by2 - by1
             bcy = (by1 + by2) / 2.0
 
-            # 1. الانحراف الرأسي عن خط المحاذاة الأفقي
             y_dev = abs(bcy - med_cy) / max(1.0, med_h)
-
-            # 2. أقصى درجة ثقة لمرشح يتقاطع مع الصندوق
             max_cand_conf = 0.0
             for (cx1, cy1, cx2, cy2), cname, conf in candidates:
                 inter = max(0, min(bx2, cx2) - max(bx1, cx1))
@@ -94,12 +89,9 @@ def prune_spurious_boxes(clean_b: list, candidates: list, plate_w: int, plate_h:
                 if iou > 0.18:
                     max_cand_conf = max(max_cand_conf, conf)
 
-            # 3. عقوبة الصناديق الملاصقة لحافة اللوحة بدون محرف قوي
-            edge_penalty = 1.5 if (bx1 < plate_w * 0.03 or bx2 > plate_w * 0.97) else 1.0
-
-            # حساب درجة الشذوذ المركبة
+            edge_pen = 1.5 if (bx1 < plate_w * 0.03 or bx2 > plate_w * 0.97) else 1.0
             anomaly = (y_dev * 2.0) + (1.0 - max_cand_conf) * 1.5 + (abs(bw - med_w) / max(1.0, med_w)) * 0.8
-            outlier_scores.append((anomaly * edge_penalty, idx))
+            outlier_scores.append((anomaly * edge_pen, idx))
 
         outlier_scores.sort(reverse=True)
         worst_idx = outlier_scores[0][1]
@@ -108,23 +100,17 @@ def prune_spurious_boxes(clean_b: list, candidates: list, plate_w: int, plate_h:
     return clean_b
 
 def resolve_split_index(clean_b: list, candidates: list) -> int:
-    """
-    تحديد الحد الفاصل الحتمي بين الأرقام والحروف:
-    إذا كان عدد الخانات 6:
-    - المفاضلة الدقيقة بين القاهرة (3 أرقام + 3 حروف) والجيزة (4 أرقام + 2 حروف)
-    - عبر دمج قياس الفجوات الهندسية (Gaps) مع الاحتمالية التصنيفية للخانة الرابعة (رقم أم حرف).
-    """
     n = len(clean_b)
     if n >= 7:
-        return 3  # 4 أرقام (0, 1, 2, 3) والباقي حروف
+        return 3
     elif n <= 4:
         return max(0, n // 2 - 1)
     elif n == 5:
-        return 2  # الافتراضي 3 أرقام + 2 حروف
+        return 2
 
-    # حالة n == 6: القاهرة (split_idx = 2) ضد الجيزة (split_idx = 3)
-    g2 = clean_b[3][0] - clean_b[2][2] # الفجوة بعد الخانة 3
-    g3 = clean_b[4][0] - clean_b[3][2] # الفجوة بعد الخانة 4
+    # n == 6: Cairo (split 2) vs Giza (split 3)
+    g2 = clean_b[3][0] - clean_b[2][2]
+    g3 = clean_b[4][0] - clean_b[3][2]
 
     b3_x1, b3_y1, b3_x2, b3_y2 = clean_b[3]
     b3_w = b3_x2 - b3_x1
@@ -144,24 +130,15 @@ def resolve_split_index(clean_b: list, candidates: list) -> int:
             else:
                 letter_score = max(letter_score, raw_c)
 
-    # إذا كان محتوى الخانة الرابعة رقماً قوياً، فاللوحة جيزة (4 أرقام)
     if digit_score > letter_score + 0.15:
         return 3
     elif letter_score > digit_score + 0.15:
         return 2
     else:
-        # الاعتماد على الفجوة الأوسع
         return 2 if g2 > g3 else 3
 
 def verify_digit_geometry(patch: np.ndarray, cand_name: str, cand_score: float, candidate_list: list) -> str:
-    """
-    التحقق الهندسي المجهري للأرقام الملتبسة واستبعاد الصفر الممنوع:
-    1. تصحيح الخلط بين الحروف والأرقام في خانة الأرقام (مثل عين -> 4، ألف/لام -> 1، هاء -> 5).
-    2. استبعاد الرقم صفر (0) قانونياً واستبداله بأقرب رقم منافس أو 5.
-    3. حسم 1 ضد 2 بالاعتماد على نحافة السكتة الرأسية ونسبة العرض للارتفاع.
-    4. حسم 7 ضد 3 بالاعتماد على مستوى الثقة والمنافسة الهيكلية.
-    """
-    # تصحيح التسميات الحرفية التي تقع بالخطأ في خانات الأرقام
+    # خريطة تحويل الحروف للأرقام المقابلة عند الخطأ في خانة رقمية
     LETTER_TO_DIGIT = {
         'ain': '4', 'alif': '1', 'laam': '1',
         'haa': '5', 'waw': '9', 'seen': '3',
@@ -170,7 +147,6 @@ def verify_digit_geometry(patch: np.ndarray, cand_name: str, cand_score: float, 
     if cand_name in LETTER_TO_DIGIT:
         cand_name = LETTER_TO_DIGIT[cand_name]
 
-    # استبعاد الرقم صفر لأنه ممنوع مرورياً في اللوحات المصرية
     if cand_name == '0':
         alt_digits = [c[1] for c in candidate_list if c[1] in {'1', '2', '3', '4', '5', '6', '7', '8', '9'}]
         cand_name = alt_digits[0] if alt_digits else '5'
@@ -183,7 +159,6 @@ def verify_digit_geometry(patch: np.ndarray, cand_name: str, cand_score: float, 
 
     cand_names_only = [c[1] for c in candidate_list]
 
-    # 1. التحقق من رقم 1 ضد 2:
     v_prof = np.sum(th > 0, axis=0)
     col_idx = np.where(v_prof > 0)[0]
     span = col_idx[-1] - col_idx[0] if len(col_idx) else w
@@ -192,21 +167,13 @@ def verify_digit_geometry(patch: np.ndarray, cand_name: str, cand_score: float, 
     if cand_name == '2' and aspect_stroke < 0.34 and ('1' in cand_names_only or 'alif' in cand_names_only or aspect_stroke < 0.28):
         return '1'
 
-    # 2. التحقق من رقم 7 ضد 3:
     if cand_name == '3' and cand_score < 0.60 and ('6' in cand_names_only or '7' in cand_names_only or len(cand_names_only) < 3):
         return '7'
 
     return cand_name
 
-def verify_letter_geometry(patch: np.ndarray, cand_name: str, all_detected_letters: list, 
+def verify_letter_geometry(patch: np.ndarray, cand_name: str, all_detected_letters: list,
                            candidate_list: list, all_letter_patches: list) -> str:
-    """
-    التحقق الهندسي والسياقي للحروف وتطبيق القواعد الرسمية المصرية:
-    1. تصحيح الأرقام التي تقع في خانات الحروف (مثل 4 -> عين، 1 -> ألف، 5 -> هاء).
-    2. تطبيق جدول التحويل الرسمي للحروف المحظورة قانوناً في المرور المصري.
-    3. التحقق من تطابق التوائم (مثل توأم ق ق) بمعامل الارتباط البصري.
-    """
-    # تصحيح التسميات الرقمية التي تقع في خانات الحروف
     DIGIT_TO_LETTER = {
         '4': 'ain', '1': 'alif', '5': 'haa',
         '0': 'haa', '9': 'waw', '3': 'seen', '2': 'baa'
@@ -214,11 +181,9 @@ def verify_letter_geometry(patch: np.ndarray, cand_name: str, all_detected_lette
     if cand_name in DIGIT_TO_LETTER:
         cand_name = DIGIT_TO_LETTER[cand_name]
 
-    # تطبيق جدول التحويل الرسمي للحروف المحظورة
     if cand_name in CANONICAL_LETTER_MAP:
         cand_name = CANONICAL_LETTER_MAP[cand_name]
 
-    # تطابق التوائم (مثل ق ق)
     if cand_name in ['jeem', 'yaa', 'baa'] and 'qaaf' in all_detected_letters:
         g_cur = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
         r_cur = cv2.resize(g_cur, (30, 40))
@@ -231,3 +196,102 @@ def verify_letter_geometry(patch: np.ndarray, cand_name: str, all_detected_lette
                     return 'qaaf'
 
     return cand_name
+
+def test_pipeline(img):
+    p_res = plate_model(img, conf=0.35, verbose=False)[0]
+    if not p_res.boxes:
+        return None
+    bx = p_res.boxes[0]
+    x1, y1, x2, y2 = map(int, bx.xyxy[0])
+    crop = img[y1:y2, x1:x2]
+
+    crop_rot, angle = deskew_adaptive(crop)
+    h, w = crop_rot.shape[:2]
+    if h < 10 or w < 20: return None
+
+    pass1 = cv2.resize(crop_rot, (int(w * SCALE_FACTOR), int(h * SCALE_FACTOR)), interpolation=cv2.INTER_LANCZOS4)
+    w_tot = pass1.shape[1]
+    pass2 = cv2.resize(crop_rot, (int(w * (SCALE_FACTOR * 1.2)), int(h * (SCALE_FACTOR * 1.2))), interpolation=cv2.INTER_LANCZOS4)
+    scale2 = pass2.shape[1] / w_tot
+
+    l_res = loc_model(pass1, conf=LOC_CONF, verbose=False)[0]
+    raw_b = sorted([list(map(int, bx.xyxy[0][:4])) for bx in l_res.boxes], key=lambda x: x[0])
+
+    clean_b = []
+    for b in raw_b:
+        bw = b[2] - b[0]
+        bh = b[3] - b[1]
+        if b[0] < (w_tot * 0.04) and b[0] <= 8: continue
+        if b[2] >= (w_tot * 0.985) and (bh / max(1, bw) > 2.5 or bw < w_tot * 0.04): continue
+        if bw < (w_tot * 0.03) or (bh / max(1, bw)) > 3.5: continue
+        clean_b.append(b)
+
+    c1 = recog_model(pass1, conf=RECOG_CONF, verbose=False)[0]
+    c2 = recog_model(pass2, conf=RECOG_CONF, verbose=False)[0]
+
+    candidates = []
+    for cb in c1.boxes:
+        candidates.append((list(map(float, cb.xyxy[0])), recog_model.names[int(cb.cls[0])], float(cb.conf[0]) * 1.0))
+    for cb in c2.boxes:
+        coords = [float(cb.xyxy[0][0])/scale2, float(cb.xyxy[0][1])/scale2, float(cb.xyxy[0][2])/scale2, float(cb.xyxy[0][3])/scale2]
+        candidates.append((coords, recog_model.names[int(cb.cls[0])], float(cb.conf[0]) * 0.95))
+
+    clean_b = prune_spurious_boxes(clean_b, candidates, pass1.shape[1], pass1.shape[0])
+    split_idx = resolve_split_index(clean_b, candidates)
+
+    stage1_cands, stage1_scores, box_cands_map = [], [], []
+    for i, (lx1, ly1, lx2, ly2) in enumerate(clean_b):
+        is_digit = (i <= split_idx)
+        best_cand, best_score = None, -1.0
+        cands_for_box = []
+        bw = lx2 - lx1
+        lcx = (lx1 + lx2) / 2.0
+        for (cx1, cy1, cx2, cy2), cname, raw_c in candidates:
+            inter = max(0, min(lx2, cx2) - max(lx1, cx1))
+            union = max(lx2, cx2) - min(lx1, cx1)
+            iou = inter / union if union > 0 else 0
+            ccx = (cx1 + cx2) / 2.0
+            center_dist = abs(lcx - ccx)
+            if iou > 0.18 or (center_dist < bw * 0.48 and inter > 0):
+                w_c = raw_c * CLASS_WEIGHTS.get(cname, 1.0)
+                if is_digit and cname == 'ain': cname, w_c = '4', raw_c
+                if is_digit and cname == 'alif': cname, w_c = '1', raw_c
+                cands_for_box.append((w_c, cname))
+                if (cname in DIGITS_SET) == is_digit and w_c > best_score:
+                    best_score = w_c
+                    best_cand = cname
+        stage1_cands.append(best_cand)
+        stage1_scores.append(best_score)
+        box_cands_map.append(cands_for_box)
+
+    detected_letters = [c for i, c in enumerate(stage1_cands) if i > split_idx]
+    all_letter_patches = [(stage1_cands[i], pass1[ly1:ly2, lx1:lx2]) for i, (lx1, ly1, lx2, ly2) in enumerate(clean_b) if i > split_idx]
+
+    nums, lets = [], []
+    for i, (lx1, ly1, lx2, ly2) in enumerate(clean_b):
+        is_digit = (i <= split_idx)
+        cand = stage1_cands[i]
+        score = stage1_scores[i]
+        patch = pass1[ly1:ly2, lx1:lx2]
+        box_cands = box_cands_map[i]
+
+        if is_digit:
+            verified = verify_digit_geometry(patch, cand, score, box_cands)
+            nums.append(CHAR_MAP.get(verified, '?'))
+        else:
+            verified = verify_letter_geometry(patch, cand, detected_letters, box_cands, all_letter_patches)
+            lets.append(CHAR_MAP.get(verified, '?'))
+
+    syntax_res = validate_egyptian_syntax(nums, list(reversed(lets)))
+    return nums, list(reversed(lets)), syntax_res
+
+images = ['1.jpg', '2.jpg', '3.jpg', '4.jpg', '5.jpg', '6.jpg', '7.jpg', '8.jpg', '9.jpg', 'test1.jpg', 'test2.jpg', 'test3.jpg', 'test4.png']
+
+print("=== Phase 2 Validation Test on All 13 Images ===")
+for img_name in images:
+    img = cv2.imread(img_name)
+    nums, lets, syntax = test_pipeline(img)
+    num_txt = " ".join(nums)
+    let_txt = " ".join(lets)
+    valid_icon = "🟢" if syntax['is_valid'] else "🔴"
+    print(f"{img_name:10s} -> [{num_txt}] | [{let_txt}]  {valid_icon} {syntax['badge']}")
