@@ -16,6 +16,9 @@ key.pem
 
 # Media outputs and caches
 output_*.mp4
+crop_*_inspect.jpg
+test_tahoma.png
+*_backup.pt
 .tempmediaStorage/
 .system_generated/
 
@@ -25,3 +28,12 @@ output_*.mp4
 env/
 .vscode/
 .idea/
+
+# Local ALPR Database & Crops
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/crops/*
+!data/crops/.gitkeep
+data/real_plates_extracted/
+data/auto_labeled/

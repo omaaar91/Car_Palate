@@ -102,7 +102,7 @@ if __name__ == "__main__":
     print("🔐 جاري تهيئة شهادة الأمان المتوافقة مع الآيفون...")
     cert_file, key_file = generate_ssl_for_ip(current_ip)
     
-    scanner_url = f"https://{current_ip}:8000/scanner"
+    scanner_url = f"https://{current_ip}:8443/scanner"
     
     print("=" * 65)
     print("🚀 السيرفر جاهز للعمل!")
@@ -111,4 +111,4 @@ if __name__ == "__main__":
     print("💡 في سفاري: اضغط Show Details -> visit this website -> Allow Camera")
     print("=" * 65 + "\n")
 
-    uvicorn.run("backend.app:app", host="0.0.0.0", port=8000, ssl_certfile=cert_file, ssl_keyfile=key_file)
+    uvicorn.run("backend.app:app", host="0.0.0.0", port=8443, ssl_certfile=cert_file, ssl_keyfile=key_file)

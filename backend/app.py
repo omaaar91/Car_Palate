@@ -1,14 +1,22 @@
 import os
 import time
 import base64
+import csv
+import io
 import cv2
 import numpy as np
+from pydantic import BaseModel
+from typing import List, Optional
+from collections import deque, Counter
+
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from core.pipeline import EgyptianALPR
 from backend.schemas import ALPRResponse, PlateResult
+from backend.database import get_alpr_database, CROPS_DIR
 
 app = FastAPI(
     title="Egyptian License Plate Recognition API",
@@ -16,7 +24,7 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# تمكين CORS لدعم الاتصال من Streamlit والتطبيقات المحمولة
+# تمكين CORS لدعم الاتصال من مختلف المتصفحات والتطبيقات
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,6 +32,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend")
+STATIC_DIR = os.path.join(FRONTEND_DIR, "static")
+
+os.makedirs(STATIC_DIR, exist_ok=True)
+AUTO_LABELED_DIR = os.path.join(os.path.dirname(CROPS_DIR), "auto_labeled")
+os.makedirs(AUTO_LABELED_DIR, exist_ok=True)
+
+# ربط الملفات الثابتة والصور المقصوصة
+app.mount("/crops", StaticFiles(directory=CROPS_DIR), name="crops")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/auto_labeled", StaticFiles(directory=AUTO_LABELED_DIR), name="auto_labeled")
 
 # تهيئة المحرك الذكي
 alpr_engine = None
@@ -37,6 +57,7 @@ def get_alpr_engine() -> EgyptianALPR:
 @app.on_event("startup")
 def startup_event():
     get_alpr_engine()
+    get_alpr_database()
 
 @app.get("/")
 def root():
@@ -44,7 +65,9 @@ def root():
         "status": "online",
         "service": "Egyptian ALPR API",
         "version": "2.0.0",
-        "docs": "/docs"
+        "docs": "/docs",
+        "scanner": "/scanner",
+        "dashboard": "/dashboard"
     }
 
 @app.get("/health")
@@ -144,17 +167,298 @@ async def predict_frame(
     }
 
 # =============================================================
-# مسار صفحة الكاميرا الحية المباشرة (AR Scanner Client)
+# مسارات الواجهة الأمامية و PWA
 # =============================================================
 @app.get("/scanner")
 def get_scanner_page():
-    scanner_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "scanner.html")
+    scanner_path = os.path.join(FRONTEND_DIR, "scanner.html")
     if os.path.exists(scanner_path):
-        return FileResponse(scanner_path)
+        return FileResponse(
+            scanner_path,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
     return Response(content="<h1>Scanner page not found</h1>", media_type="text/html", status_code=404)
 
-from collections import deque, Counter
+@app.get("/dashboard")
+def get_dashboard_page():
+    dashboard_path = os.path.join(FRONTEND_DIR, "dashboard.html")
+    if os.path.exists(dashboard_path):
+        return FileResponse(dashboard_path)
+    return Response(content="<h1>Dashboard page not found</h1>", media_type="text/html", status_code=404)
 
+@app.get("/manifest.json")
+def get_manifest():
+    manifest_path = os.path.join(FRONTEND_DIR, "manifest.json")
+    if os.path.exists(manifest_path):
+        return FileResponse(manifest_path, media_type="application/manifest+json")
+    return Response(content="{}", media_type="application/json", status_code=404)
+
+@app.get("/sw.js")
+def get_service_worker():
+    sw_path = os.path.join(FRONTEND_DIR, "sw.js")
+    if os.path.exists(sw_path):
+        return FileResponse(sw_path, media_type="application/javascript", headers={"Service-Worker-Allowed": "/"})
+    return Response(content="", media_type="application/javascript", status_code=404)
+
+# =============================================================
+# مسار أداة المراجعة السريعة واعتماد الداتا سيت
+# =============================================================
+@app.get("/review")
+def get_review_page():
+    review_path = os.path.join(FRONTEND_DIR, "review.html")
+    if os.path.exists(review_path):
+        return FileResponse(review_path)
+    return Response(content="<h1>Review page not found</h1>", media_type="text/html", status_code=404)
+
+@app.get("/api/review/items")
+def get_review_items():
+    meta_path = os.path.join(AUTO_LABELED_DIR, "review_data.json")
+    if os.path.exists(meta_path):
+        import json
+        with open(meta_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+class ReviewConfirmRequest(BaseModel):
+    filename: str
+    action: str = "confirm"
+
+@app.post("/api/review/confirm")
+def review_confirm(req: ReviewConfirmRequest):
+    base_name = os.path.splitext(req.filename)[0]
+    cand_img = os.path.join(AUTO_LABELED_DIR, "candidates", f"{base_name}.jpg")
+    cand_txt = os.path.join(AUTO_LABELED_DIR, "candidates", f"{base_name}.txt")
+    ver_dir = os.path.join(AUTO_LABELED_DIR, "verified")
+
+    if req.action == "confirm" and os.path.exists(cand_img):
+        import shutil
+        shutil.move(cand_img, os.path.join(ver_dir, f"{base_name}.jpg"))
+        if os.path.exists(cand_txt):
+            shutil.move(cand_txt, os.path.join(ver_dir, f"{base_name}.txt"))
+    elif req.action == "discard":
+        for sub in ["candidates", "verified"]:
+            f_img = os.path.join(AUTO_LABELED_DIR, sub, f"{base_name}.jpg")
+            f_txt = os.path.join(AUTO_LABELED_DIR, sub, f"{base_name}.txt")
+            if os.path.exists(f_img): os.remove(f_img)
+            if os.path.exists(f_txt): os.remove(f_txt)
+
+    return {"success": True}
+
+class UpdateCharRequest(BaseModel):
+    filename: str
+    char_index: int
+    new_char: str
+
+@app.post("/api/review/update_char")
+def review_update_char(req: UpdateCharRequest):
+    import json
+    base_name = os.path.splitext(req.filename)[0]
+    meta_path = os.path.join(AUTO_LABELED_DIR, "review_data.json")
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=404, detail="Review data not found")
+
+    with open(meta_path, "r", encoding="utf-8") as f:
+        items = json.load(f)
+
+    target_item = None
+    for item in items:
+        if item["filename"] == req.filename:
+            target_item = item
+            break
+
+    if not target_item or req.char_index >= len(target_item["chars"]):
+        raise HTTPException(status_code=404, detail="Item or char index not found")
+
+    engine = get_alpr_engine()
+    name_to_id = {v: k for k, v in engine.recog_model.names.items()}
+    
+    from core.config import CHAR_MAP
+    ar_to_name = {v: k for k, v in CHAR_MAP.items()}
+    digit_fix = {'٠':'0', '١':'1', '٢':'2', '٣':'3', '٤':'4', '٥':'5', '٦':'6', '٧':'7', '٨':'8', '٩':'9', 'ه':'haa'}
+    
+    raw = req.new_char.strip()
+    if raw in digit_fix:
+        raw = digit_fix[raw]
+
+    model_name = ar_to_name.get(raw, raw)
+    if model_name not in name_to_id:
+        for k, v in name_to_id.items():
+            if k.lower() == model_name.lower():
+                model_name = k
+                break
+
+    class_id = name_to_id.get(model_name, 0)
+    arabic_display = CHAR_MAP.get(model_name, raw)
+
+    target_item["chars"][req.char_index]["name"] = model_name
+    target_item["chars"][req.char_index]["arabic"] = arabic_display
+    target_item["chars"][req.char_index]["is_digit"] = model_name in [str(i) for i in range(10)]
+
+    nums = [c["arabic"] for c in target_item["chars"] if c["is_digit"]]
+    # الحروف مقصوصة من اليسار لليمين مكانياً، وقراءتها بالعربية تبدأ من اليمين لليسار
+    raw_lets = [c["arabic"] for c in target_item["chars"] if not c["is_digit"]]
+    arabic_lets = list(reversed(raw_lets))
+
+    from core.verification import validate_egyptian_syntax
+    syntax_info = validate_egyptian_syntax(nums, arabic_lets)
+    target_item["plate_text"] = f"[{' '.join(nums)}] | [{' '.join(arabic_lets)}]"
+    target_item["syntax_valid"] = syntax_info["is_valid"]
+    target_item["governorate"] = syntax_info["governorate"]
+    target_item["badge"] = syntax_info["badge"]
+
+    # إعادة كتابة ملف الـ YOLO .txt على القرص فوراً
+    target_folder = target_item.get("folder", "verified")
+    txt_path = os.path.join(AUTO_LABELED_DIR, target_folder, f"{base_name}.txt")
+    img_path = os.path.join(AUTO_LABELED_DIR, target_folder, f"{base_name}.jpg")
+
+    if os.path.exists(img_path):
+        img = cv2.imread(img_path)
+        if img is not None:
+            h, w = img.shape[:2]
+            yolo_lines = []
+            for c in target_item["chars"]:
+                cid = name_to_id.get(c["name"], 0)
+                lx1, ly1, lx2, ly2 = c["box"]
+                cx = ((lx1 + lx2) / 2.0) / w
+                cy = ((ly1 + ly2) / 2.0) / h
+                bw = (lx2 - lx1) / w
+                bh = (ly2 - ly1) / h
+                yolo_lines.append(f"{cid} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+
+            with open(txt_path, "w", encoding="utf-8") as f_txt:
+                f_txt.write("\n".join(yolo_lines) + "\n")
+
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+
+    return {
+        "success": True, 
+        "updated_item": target_item,
+        "new_class_id": class_id,
+        "saved_txt": txt_path
+    }
+
+@app.get("/api/review/export_zip")
+def export_dataset_zip():
+    import zipfile
+    ver_dir = os.path.join(AUTO_LABELED_DIR, "verified")
+    
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as z:
+        engine = get_alpr_engine()
+        names_list = [engine.recog_model.names[i] for i in sorted(engine.recog_model.names.keys())]
+        yaml_content = f"""path: ./dataset
+train: images/train
+val: images/val
+nc: {len(names_list)}
+names: {names_list}
+"""
+        z.writestr("dataset/data.yaml", yaml_content)
+
+        files = os.listdir(ver_dir) if os.path.exists(ver_dir) else []
+        jpg_files = sorted([f for f in files if f.endswith(".jpg")])
+        
+        # تقسيم بنسبة 85% للتدريب و 15% للتحقق لضمان حساب دقيق للـ mAP في Colab
+        split_idx = int(len(jpg_files) * 0.85)
+        train_set = set(jpg_files[:split_idx])
+
+        for f in jpg_files:
+            base = os.path.splitext(f)[0]
+            split = "train" if f in train_set else "val"
+            img_path = os.path.join(ver_dir, f)
+            txt_path = os.path.join(ver_dir, f"{base}.txt")
+            if os.path.exists(img_path):
+                z.write(img_path, f"dataset/images/{split}/{f}")
+            if os.path.exists(txt_path):
+                z.write(txt_path, f"dataset/labels/{split}/{base}.txt")
+
+    zip_buffer.seek(0)
+    return Response(
+        content=zip_buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=egyptian_chars_verified_dataset_{int(time.time())}.zip"}
+    )
+
+# =============================================================
+# مسارات إدارة قاعدة البيانات ولوحة التحكم
+# =============================================================
+class BlacklistAddRequest(BaseModel):
+    digits: list
+    letters: list
+    reason: str
+    severity: str = "danger"
+
+@app.get("/api/stats")
+def get_stats():
+    db = get_alpr_database()
+    return db.get_stats_summary()
+
+@app.get("/api/logs")
+def get_logs(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    q: str = Query("", description="البحث باللوحة أو المحافظة"),
+    date: str = Query("", description="فلترة التاريخ YYYY-MM-DD")
+):
+    db = get_alpr_database()
+    logs = db.get_logs(limit=limit, offset=offset, query=q, date_filter=date)
+    return {"logs": logs}
+
+@app.get("/api/blacklist")
+def get_blacklist():
+    db = get_alpr_database()
+    return {"items": db.get_blacklist_items()}
+
+@app.post("/api/blacklist")
+def add_blacklist(item: BlacklistAddRequest):
+    db = get_alpr_database()
+    success = db.add_to_blacklist(
+        digits=item.digits,
+        letters=item.letters,
+        reason=item.reason,
+        severity=item.severity
+    )
+    return {"success": success}
+
+@app.delete("/api/blacklist/{item_id}")
+def delete_blacklist(item_id: int):
+    db = get_alpr_database()
+    success = db.remove_from_blacklist(item_id)
+    return {"success": success}
+
+@app.get("/api/export/csv")
+def export_csv():
+    db = get_alpr_database()
+    logs = db.get_logs(limit=3000)
+    output = io.StringIO()
+    # UTF-8 BOM so Microsoft Excel renders Arabic text properly
+    output.write('\ufeff')
+    writer = csv.writer(output)
+    writer.writerow(["المعرف", "الوقت والتاريخ", "رقم اللوحة", "المحافظة", "نسبة التأكد", "مطلوبة أمنياً", "سبب الإدراج الأمني"])
+    for r in logs:
+        writer.writerow([
+            r["id"],
+            r["timestamp"],
+            r["plate_text"],
+            r["governorate"],
+            f"{round(r['confidence'] * 100)}%",
+            "نعم 🚨" if r["is_blacklist"] else "لا",
+            r["blacklist_reason"] or "-"
+        ])
+    output.seek(0)
+    return Response(
+        content=output.getvalue().encode('utf-8-sig'),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=vehicle_logs_{int(time.time())}.csv"}
+    )
+
+# =============================================================
+# نظام التثبيت الزمني للوحات عبر الفريمات المتتابعة
+# =============================================================
 class TemporalPlateStabilizer:
     """
     نظام التصويت والتثبيت الزمني التراكمي (Multi-Frame Temporal Voting)
@@ -241,6 +545,94 @@ class TemporalPlateStabilizer:
 
         return stabilized_plates
 
+def process_live_frame_dict(frame: np.ndarray, stabilizer: TemporalPlateStabilizer, engine, db) -> dict:
+    """معالجة فريم حي مباشر من الكاميرا مع التثبيت الزمني وفحص القائمة السوداء"""
+    h, w = frame.shape[:2]
+    p_res = engine.plate_model(frame, conf=0.35, verbose=False)[0]
+    raw_plates = []
+    for b in p_res.boxes:
+        x1, y1, x2, y2 = map(int, b.xyxy[0])
+        bw, bh = x2 - x1, y2 - y1
+        if bw < 42 or bh < 14:
+            continue
+        crop = frame[y1:y2, x1:x2]
+        rec = engine.recognize_plate_crop(crop)
+        raw_plates.append({
+            "text": rec["text"],
+            "digits": rec["digits"],
+            "letters": rec["letters"],
+            "bbox": [x1, y1, x2, y2],
+            "conf": round(float(b.conf[0]), 2),
+            "syntax_valid": rec.get("syntax_valid", False),
+            "governorate": rec.get("governorate", "غير محدد"),
+            "badge": rec.get("badge", "")
+        })
+
+    curr_t = time.time()
+    plates = stabilizer.update(raw_plates, curr_t)
+
+    has_alert = False
+    alert_data = None
+
+    for plate in plates:
+        bl_info = db.check_blacklist(plate.get("digits", []), plate.get("letters", []))
+        if bl_info is not None:
+            plate["is_blacklist"] = True
+            plate["blacklist_reason"] = bl_info["reason"]
+            plate["blacklist_severity"] = bl_info["severity"]
+            has_alert = True
+            alert_data = {
+                "plate": plate["text"],
+                "reason": bl_info["reason"],
+                "severity": bl_info["severity"]
+            }
+        else:
+            plate["is_blacklist"] = False
+            plate["blacklist_reason"] = ""
+            plate["blacklist_severity"] = ""
+
+        # تسجيل المركبة في قاعدة البيانات وحفظ لقطة اللوحة عند ثبوت القراءة
+        if plate.get("is_stabilized") or (plate.get("syntax_valid") and len(plate.get("digits", [])) >= 3):
+            bx1, by1, bx2, by2 = plate["bbox"]
+            plate_crop = frame[max(0, by1):min(h, by2), max(0, bx1):min(w, bx2)]
+            if plate_crop.size > 0:
+                db.log_vehicle(plate_data=plate, crop_img=plate_crop, cooldown_seconds=20.0)
+
+    return {
+        "success": len(plates) > 0,
+        "plates": plates,
+        "alert": has_alert,
+        "alert_info": alert_data,
+        "frame_w": w,
+        "frame_h": h
+    }
+
+class LiveFrameRequest(BaseModel):
+    image: str
+
+global_http_stabilizer = TemporalPlateStabilizer(history_len=6)
+
+@app.post("/api/scan/live_frame")
+async def scan_live_frame(req: LiveFrameRequest):
+    """نقطة نهاية سريعة للمسح اللحظي عبر HTTP لأجهزة الآيفون في حال تقييد الـ WebSocket"""
+    data = req.image
+    if "," in data:
+        data = data.split(",")[1]
+    try:
+        img_bytes = base64.b64decode(data)
+        np_arr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image data")
+
+    if frame is None:
+        raise HTTPException(status_code=400, detail="Failed to decode image")
+
+    engine = get_alpr_engine()
+    db = get_alpr_database()
+    result = process_live_frame_dict(frame, global_http_stabilizer, engine, db)
+    return result
+
 # =============================================================
 # نقطة نهاية الـ WebSocket للكاميرا الحية المباشرة الفورية
 # =============================================================
@@ -248,6 +640,7 @@ class TemporalPlateStabilizer:
 async def websocket_scanner(websocket: WebSocket):
     await websocket.accept()
     engine = get_alpr_engine()
+    db = get_alpr_database()
     stabilizer = TemporalPlateStabilizer(history_len=6)
     fps_counter = 0
     t0 = time.time()
@@ -268,31 +661,7 @@ async def websocket_scanner(websocket: WebSocket):
                 await websocket.send_json({"success": False, "plates": []})
                 continue
 
-            h, w = frame.shape[:2]
-            p_res = engine.plate_model(frame, conf=0.35, verbose=False)[0]
-            raw_plates = []
-            for b in p_res.boxes:
-                x1, y1, x2, y2 = map(int, b.xyxy[0])
-                bw, bh = x2 - x1, y2 - y1
-                # تجاهل الصناديق متناهية الصغر التي تسبب تشويشاً
-                if bw < 42 or bh < 14:
-                    continue
-                crop = frame[y1:y2, x1:x2]
-                rec = engine.recognize_plate_crop(crop)
-                raw_plates.append({
-                    "text": rec["text"],
-                    "digits": rec["digits"],
-                    "letters": rec["letters"],
-                    "bbox": [x1, y1, x2, y2],
-                    "conf": round(float(b.conf[0]), 2),
-                    "syntax_valid": rec.get("syntax_valid", False),
-                    "governorate": rec.get("governorate", "غير محدد"),
-                    "badge": rec.get("badge", "")
-                })
-
-            # تطبيق التثبيت والتصويت الزمني عبر الفريمات المتتالية
-            curr_t = time.time()
-            plates = stabilizer.update(raw_plates, curr_t)
+            result = process_live_frame_dict(frame, stabilizer, engine, db)
 
             fps_counter += 1
             elapsed = time.time() - t0
@@ -301,13 +670,8 @@ async def websocket_scanner(websocket: WebSocket):
                 fps_counter = 0
                 t0 = time.time()
 
-            await websocket.send_json({
-                "success": len(plates) > 0,
-                "plates": plates,
-                "frame_w": w,
-                "frame_h": h,
-                "fps": fps
-            })
+            result["fps"] = fps
+            await websocket.send_json(result)
     except WebSocketDisconnect:
         pass
     except Exception as e:

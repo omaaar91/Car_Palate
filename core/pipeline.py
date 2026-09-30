@@ -1,6 +1,10 @@
+import os
 import cv2
 import numpy as np
 from ultralytics import YOLO
+from PIL import Image, ImageDraw, ImageFont
+import arabic_reshaper
+from bidi.algorithm import get_display
 
 from core.config import (
     PLATE_MODEL_PATH, LOC_MODEL_PATH, RECOG_MODEL_PATH,
@@ -16,6 +20,18 @@ from core.verification import (
     verify_letter_geometry
 )
 
+# مسار الخط العربي للنظام لدعم الرسم العربي فائق الجودة
+FONT_PATH = "C:/Windows/Fonts/tahoma.ttf"
+if not os.path.exists(FONT_PATH):
+    FONT_PATH = "C:/Windows/Fonts/arial.ttf"
+
+def render_arabic_text(text: str) -> str:
+    """إعادة تشكيل النص العربي وعكس اتجاهه ليظهر بشكل صحيح مع مكتبات الرسم"""
+    try:
+        return get_display(arabic_reshaper.reshape(text))
+    except Exception:
+        return text
+
 class EgyptianALPR:
     """
     نظام التعرف الذكي متعدد المراحل على لوحات المركبات المصرية
@@ -26,7 +42,7 @@ class EgyptianALPR:
                  loc_model_path: str = LOC_MODEL_PATH,
                  recog_model_path: str = RECOG_MODEL_PATH):
         
-        print("🧠 جاري تحميل النماذج الذكية الثلاثة...")
+        print(f"🧠 جاري تحميل النماذج الذكية الثلاثة (مصنف الرموز: {os.path.basename(recog_model_path)})...")
         self.plate_model = YOLO(plate_model_path)
         self.loc_model   = YOLO(loc_model_path)
         self.recog_model = YOLO(recog_model_path)
@@ -82,16 +98,14 @@ class EgyptianALPR:
             coords = [float(cb.xyxy[0][0])/scale2, float(cb.xyxy[0][1])/scale2, float(cb.xyxy[0][2])/scale2, float(cb.xyxy[0][3])/scale2]
             candidates.append((coords, self.recog_model.names[int(cb.cls[0])], float(cb.conf[0]) * 0.95))
 
-        # تنقية الصناديق الزائفة وتحديد الفاصل بين الأرقام والحروف وفق الهيكل المروري
+        # تنقية الصناديق الزائفة كالمسامير والانعكاسات
         clean_b = prune_spurious_boxes(clean_b, candidates, pass1.shape[1], pass1.shape[0])
-        split_idx = resolve_split_index(clean_b, candidates)
 
-        # مطابقة المرشحين للخانات
+        # مطابقة المرشحين للخانات بمرونة عالية وحرية كاملة
         stage1_cands = []
         stage1_scores = []
         box_cands_map = []
         for i, (lx1, ly1, lx2, ly2) in enumerate(clean_b):
-            is_digit = (i <= split_idx)
             best_cand, best_score = None, -1.0
             cands_for_box = []
             bw = lx2 - lx1
@@ -104,31 +118,34 @@ class EgyptianALPR:
                 center_dist = abs(lcx - ccx)
                 if iou > 0.18 or (center_dist < bw * 0.48 and inter > 0):
                     w_c = raw_c * CLASS_WEIGHTS.get(cname, 1.0)
-                    if is_digit and cname == 'ain': cname, w_c = '4', raw_c
-                    if is_digit and cname == 'alif': cname, w_c = '1', raw_c
                     cands_for_box.append((w_c, cname))
-                    if (cname in DIGITS_SET) == is_digit and w_c > best_score:
+                    if w_c > best_score:
                         best_score = w_c
                         best_cand = cname
             stage1_cands.append(best_cand)
             stage1_scores.append(best_score)
             box_cands_map.append(cands_for_box)
 
-        detected_letters = [c for i, c in enumerate(stage1_cands) if i > split_idx]
-        all_letter_patches = [(stage1_cands[i], pass1[ly1:ly2, lx1:lx2]) for i, (lx1, ly1, lx2, ly2) in enumerate(clean_b) if i > split_idx]
+        detected_letters = [c for c in stage1_cands if c not in DIGITS_SET and c is not None]
+        all_letter_patches = [(stage1_cands[i], pass1[ly1:ly2, lx1:lx2]) for i, (lx1, ly1, lx2, ly2) in enumerate(clean_b) if stage1_cands[i] not in DIGITS_SET and stage1_cands[i] is not None]
 
         # 4. محرك التحقق الهندسي وتطابق التوائم
         annotated = pass1.copy()
         nums, lets = [], []
         char_details = []
+        box_labels = []
 
         for i, (lx1, ly1, lx2, ly2) in enumerate(clean_b):
-            is_digit = (i <= split_idx)
             cand = stage1_cands[i]
             score = stage1_scores[i]
             patch = pass1[ly1:ly2, lx1:lx2]
             box_cands = box_cands_map[i]
 
+            # استبعاد الصناديق الزائفة مثل المسامير أو الشعار التي ليس لها محرف متطابق
+            if cand is None or score < 0.08:
+                continue
+
+            is_digit = (cand in DIGITS_SET)
             if is_digit:
                 verified = verify_digit_geometry(patch, cand, score, box_cands)
                 ar_char = CHAR_MAP.get(verified, '?')
@@ -142,7 +159,7 @@ class EgyptianALPR:
 
             color = (0, 220, 0) if is_digit else (255, 120, 0)
             cv2.rectangle(annotated, (lx1, ly1), (lx2, ly2), color, 2)
-            cv2.putText(annotated, str(label_text or '?'), (lx1 + 2, max(24, ly1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
+            box_labels.append(((lx1, ly1, lx2, ly2), ar_char, is_digit, label_text))
 
             char_details.append({
                 "box": [lx1, ly1, lx2, ly2],
@@ -151,9 +168,27 @@ class EgyptianALPR:
                 "is_digit": is_digit
             })
 
-        num_txt = " ".join(nums)
+        # رسم الحروف والأرقام العربية بوضوح فائق باستخدام PIL
+        if box_labels:
+            try:
+                annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(annotated_rgb)
+                draw = ImageDraw.Draw(pil_img)
+                font_char = ImageFont.truetype(FONT_PATH, 20)
+                for (lx1, ly1, lx2, ly2), ar_char, is_digit, _ in box_labels:
+                    color = (0, 255, 100) if is_digit else (255, 160, 0)
+                    reshaped = render_arabic_text(ar_char)
+                    draw.rectangle([lx1, max(0, ly1 - 26), lx1 + 26, ly1], fill=(0, 0, 0, 220))
+                    draw.text((lx1 + 4, max(0, ly1 - 26)), reshaped, font=font_char, fill=color)
+                annotated = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            except Exception:
+                for (lx1, ly1, lx2, ly2), _, is_digit, label_text in box_labels:
+                    color = (0, 220, 0) if is_digit else (255, 120, 0)
+                    cv2.putText(annotated, str(label_text or '?'), (lx1 + 2, max(24, ly1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
+
+        num_txt = " ".join(nums) if nums else "-"
         rev_lets = list(reversed(lets))
-        let_txt = " ".join(rev_lets)
+        let_txt = " ".join(rev_lets) if rev_lets else "-"
         full_text = f"[{num_txt}] | [{let_txt}]"
 
         syntax_info = validate_egyptian_syntax(nums, rev_lets)
@@ -197,8 +232,19 @@ class EgyptianALPR:
             cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
 
             label = plate_text if plate_text else f"Plate: {conf:.2f}"
-            cv2.rectangle(annotated_frame, (x1, max(0, y1 - 35)), (x1 + 280, y1), (0, 0, 0), -1)
-            cv2.putText(annotated_frame, label, (x1 + 5, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
+            cv2.rectangle(annotated_frame, (x1, max(0, y1 - 35)), (x1 + 320, y1), (0, 0, 0), -1)
+
+            # رسم النص العربي على الشريط العلوي
+            try:
+                ann_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+                pil_ann = Image.fromarray(ann_rgb)
+                draw_ann = ImageDraw.Draw(pil_ann)
+                font_top = ImageFont.truetype(FONT_PATH, 20)
+                reshaped_lbl = render_arabic_text(label)
+                draw_ann.text((x1 + 8, max(0, y1 - 30)), reshaped_lbl, font=font_top, fill=(0, 255, 255))
+                annotated_frame = cv2.cvtColor(np.array(pil_ann), cv2.COLOR_RGB2BGR)
+            except Exception:
+                cv2.putText(annotated_frame, label, (x1 + 5, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
 
             # إضافة نافذة الزووم (HUD Inset) إذا كان ذلك مطلوباً
             if add_hud and recog_res.get("annotated") is not None:
@@ -207,8 +253,21 @@ class EgyptianALPR:
                 hud_canvas = np.zeros((hud_h, hud_w, 3), dtype=np.uint8)
                 hud_canvas[:hud_h - 45, :] = zoomed
                 badge_lbl = recog_res.get("badge", "ZOOM (Model 2 Boxes):")
-                cv2.putText(hud_canvas, badge_lbl, (8, hud_h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 0), 1)
-                cv2.putText(hud_canvas, plate_text, (8, hud_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
+
+                # رسم نصوص الـ HUD باللغة العربية
+                try:
+                    hud_rgb = cv2.cvtColor(hud_canvas, cv2.COLOR_BGR2RGB)
+                    pil_hud = Image.fromarray(hud_rgb)
+                    draw_hud = ImageDraw.Draw(pil_hud)
+                    font_hud_sm = ImageFont.truetype(FONT_PATH, 14)
+                    font_hud_lg = ImageFont.truetype(FONT_PATH, 16)
+                    draw_hud.text((8, hud_h - 40), render_arabic_text(badge_lbl), font=font_hud_sm, fill=(0, 255, 0))
+                    draw_hud.text((8, hud_h - 22), render_arabic_text(plate_text), font=font_hud_lg, fill=(0, 255, 255))
+                    hud_canvas = cv2.cvtColor(np.array(pil_hud), cv2.COLOR_RGB2BGR)
+                except Exception:
+                    cv2.putText(hud_canvas, badge_lbl, (8, hud_h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 0), 1)
+                    cv2.putText(hud_canvas, plate_text, (8, hud_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
+
                 cv2.rectangle(hud_canvas, (0, 0), (hud_w - 1, hud_h - 1), (0, 255, 0), 2)
 
                 # تثبيت الزووم في الزاوية العلوية
@@ -235,3 +294,4 @@ class EgyptianALPR:
             "plates": plates_output,
             "annotated_image": annotated_frame
         }
+

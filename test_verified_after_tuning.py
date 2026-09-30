@@ -1,13 +1,19 @@
 import cv2
 import numpy as np
 import sys
+import os
 from ultralytics import YOLO
 
-sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
+# 1. تحميل نماذج الكشف والتوطين
 plate_model = YOLO('best.pt')
 loc_model   = YOLO('best_char.pt')
-recog_model = YOLO('best_char_afterTuning.pt')
+
+# 2. استبدال موديل التعرف القديم بالموديل الجديد المطور بعد الضبط الدقيق (Fine-Tuning)
+NEW_MODEL_PATH = 'best_char_afterTuning.pt'
+recog_model = YOLO(NEW_MODEL_PATH)
 
 char_map = {
     'alif': 'أ', 'baa': 'ب', 'taa': 'ت', 'thaa': 'ث', 'jeem': 'ج',
@@ -51,7 +57,6 @@ def verify_digit_geometry(patch, cand_name, cand_score, candidate_list):
     cand_names_only = [c[1] for c in candidate_list]
     
     # 1. التحقق من رقم 1 ضد 2 (كما في صورة 4):
-    # رقم 1 هو عمود رأسي مستقيم ونحيف، ونسبة عرضه إلى ارتفاعه لا تتجاوز 0.34
     v_prof = np.sum(th > 0, axis=0)
     col_idx = np.where(v_prof > 0)[0]
     span = col_idx[-1] - col_idx[0] if len(col_idx) else w
@@ -60,8 +65,7 @@ def verify_digit_geometry(patch, cand_name, cand_score, candidate_list):
     if cand_name == '2' and aspect_stroke < 0.34 and ('1' in cand_names_only or 'alif' in cand_names_only or aspect_stroke < 0.28):
         return '1'
         
-    # 2. التحقق من رقم 7 ضد 3 (كما في صورة 3 مقابل صورة 5):
-    # رقم 3 في صورة 5 ثقته عالية جداً (0.75). أما في صورة 3 فثقته منخفضة (< 0.60) ويتنافس مع 6/7
+    # 2. التحقق من رقم 7 ضد 3:
     if cand_name == '3' and cand_score < 0.60 and ('6' in cand_names_only or '7' in cand_names_only or len(cand_names_only) < 3):
         return '7'
             
@@ -69,9 +73,7 @@ def verify_digit_geometry(patch, cand_name, cand_score, candidate_list):
 
 def verify_letter_geometry(patch, cand_name, all_detected_letters, candidate_list, all_letter_patches):
     """التحقق الهندسي والسياقي للحروف الملتبسة وتطابق التوائم"""
-    # فحص القاف ضد الجيم (كما في صورة 8):
     if cand_name in ['jeem', 'yaa'] and 'qaaf' in all_detected_letters:
-        # فحص التطابق الشكلي (Template Correlation) مع حرف القاف المؤكد الآخر على اللوحة
         g_cur = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
         r_cur = cv2.resize(g_cur, (30, 40))
         for other_name, other_patch in all_letter_patches:
@@ -84,8 +86,12 @@ def verify_letter_geometry(patch, cand_name, all_detected_letters, candidate_lis
                 
     return cand_name
 
-def process_verified(fn):
+def process_verified(fn, model_to_use):
+    if not os.path.exists(fn):
+        return f"ملف غير موجود: {fn}"
     p = plate_model(fn, verbose=False)[0]
+    if len(p.boxes) == 0:
+        return "لم يتم كشف اللوحة"
     b = p.boxes.xyxy[0]
     crop = p.orig_img[int(b[1]):int(b[3]), int(b[0]):int(b[2])]
     crop_rot, _ = deskew_adaptive(crop)
@@ -109,15 +115,15 @@ def process_verified(fn):
         if bw < (w_tot * 0.03) or (bh / max(1, bw)) > 3.5: continue
         clean_b.append(bx)
         
-    c1 = recog_model(pass1, conf=0.003, verbose=False)[0]
-    c2 = recog_model(pass2, conf=0.003, verbose=False)[0]
+    c1 = model_to_use(pass1, conf=0.003, verbose=False)[0]
+    c2 = model_to_use(pass2, conf=0.003, verbose=False)[0]
     
     candidates = []
     for cb in c1.boxes:
-        candidates.append((list(map(float, cb.xyxy[0])), recog_model.names[int(cb.cls[0])], float(cb.conf[0]) * 1.0))
+        candidates.append((list(map(float, cb.xyxy[0])), model_to_use.names[int(cb.cls[0])], float(cb.conf[0]) * 1.0))
     for cb in c2.boxes:
         coords = [float(cb.xyxy[0][0])/scale2, float(cb.xyxy[0][1])/scale2, float(cb.xyxy[0][2])/scale2, float(cb.xyxy[0][3])/scale2]
-        candidates.append((coords, recog_model.names[int(cb.cls[0])], float(cb.conf[0]) * 0.95))
+        candidates.append((coords, model_to_use.names[int(cb.cls[0])], float(cb.conf[0]) * 0.95))
         
     n = len(clean_b)
     if n >= 7: split_idx = 3
@@ -175,7 +181,14 @@ def process_verified(fn):
     let_txt = ' '.join(reversed(lets))
     return f'[{num_txt}] | [{let_txt}]'
 
-for i in range(1, 10):
-    fn = f'{i}.jpg'
-    res = process_verified(fn)
-    print(f'{fn:<6}: {res}')
+if __name__ == '__main__':
+    print("=" * 70)
+    print(f"🔥 اختبار الموديل الجديد المطور: {NEW_MODEL_PATH}")
+    print("=" * 70)
+    
+    for i in range(1, 10):
+        fn = f'{i}.jpg'
+        res_new = process_verified(fn, recog_model)
+        print(f'{fn:<6}: {res_new}')
+    
+    print("=" * 70)

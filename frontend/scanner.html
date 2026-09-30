@@ -4,13 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>🚗 كاشف اللوحات اللحظي المباشر - Live AR Scanner</title>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    
+    <!-- PWA & Mobile Web App Manifest -->
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+    <meta name="theme-color" content="#0284c7">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="CarPalate">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Outfit:wght@600;800&display=swap" rel="stylesheet">
+
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Cairo', sans-serif;
+            font-family: 'Cairo', 'Outfit', sans-serif;
             -webkit-tap-highlight-color: transparent;
         }
 
@@ -58,13 +71,13 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            z-index: 20;
+            z-index: 25;
         }
 
         .status-badge {
-            background: rgba(15, 23, 42, 0.75);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.15);
             color: #4ade80;
             padding: 6px 14px;
@@ -73,8 +86,8 @@
             font-weight: 700;
             display: flex;
             align-items: center;
-            gap: 6px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            gap: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
         }
 
         .pulse-dot {
@@ -91,10 +104,16 @@
             100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
         }
 
-        .flip-btn {
-            background: rgba(15, 23, 42, 0.75);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
+        .top-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .action-btn {
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.2);
             color: #fff;
             width: 42px;
@@ -103,9 +122,16 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.2rem;
+            font-size: 1.15rem;
+            text-decoration: none;
             cursor: pointer;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.35);
+            transition: transform 0.2s, background 0.2s;
+        }
+
+        .action-btn:hover {
+            transform: scale(1.08);
+            background: rgba(30, 41, 59, 0.95);
         }
 
         /* شبكة التصويب السينمائية */
@@ -128,6 +154,11 @@
             box-shadow: 0 0 25px rgba(34, 197, 94, 0.4);
         }
 
+        .reticle.hazard {
+            border: 2px solid #ef4444;
+            box-shadow: 0 0 30px rgba(239, 68, 68, 0.6);
+        }
+
         /* بطاقة عرض اللوحة المقروءة أسفل الشاشة */
         .bottom-card {
             position: absolute;
@@ -144,6 +175,11 @@
             z-index: 20;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
             transition: all 0.3s ease;
+        }
+
+        .bottom-card.hazard {
+            border-color: #ef4444;
+            box-shadow: 0 10px 35px rgba(239, 68, 68, 0.4);
         }
 
         .plate-label {
@@ -194,6 +230,102 @@
             transition: all 0.3s ease;
         }
 
+        /* مؤثر الوميض الأحمر التحذيري عند كشف سيارة بالقائمة السوداء */
+        .hazard-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            border: 8px solid rgba(239, 68, 68, 0.85);
+            box-shadow: inset 0 0 65px rgba(239, 68, 68, 0.7);
+            pointer-events: none;
+            z-index: 30;
+            opacity: 0;
+            transition: opacity 0.25s ease;
+            animation: hazard-flash 0.75s infinite alternate;
+            display: none;
+        }
+
+        .hazard-overlay.active {
+            display: block;
+            opacity: 1;
+        }
+
+        @keyframes hazard-flash {
+            0% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+
+        /* لافتة الإنذار الأمني المنبثقة من الأعلى */
+        .alert-modal {
+            position: absolute;
+            top: 76px;
+            left: 16px;
+            right: 16px;
+            background: rgba(185, 28, 28, 0.95);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 2px solid #ef4444;
+            border-radius: 18px;
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            z-index: 40;
+            box-shadow: 0 12px 35px rgba(239, 68, 68, 0.6);
+            transform: translateY(-160%);
+            transition: transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .alert-modal.active {
+            transform: translateY(0);
+        }
+
+        .alert-icon-anim {
+            font-size: 2.2rem;
+            animation: shake 0.6s infinite;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: rotate(0deg); }
+            25% { transform: rotate(-10deg); }
+            75% { transform: rotate(10deg); }
+        }
+
+        .alert-text-area {
+            flex: 1;
+            text-align: right;
+        }
+
+        .alert-title {
+            font-size: 1rem;
+            font-weight: 800;
+            color: #ffffff;
+        }
+
+        .alert-desc {
+            font-size: 0.82rem;
+            color: #fecaca;
+            font-weight: 600;
+            margin-top: 2px;
+        }
+
+        .alert-dismiss-btn {
+            background: rgba(0, 0, 0, 0.45);
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            color: #ffffff;
+            padding: 8px 14px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.2s;
+        }
+
+        .alert-dismiss-btn:hover {
+            background: rgba(0, 0, 0, 0.7);
+        }
+
         /* نافذة طلب الإذن وبدء الكاميرا */
         .start-modal {
             position: absolute;
@@ -218,6 +350,7 @@
             font-size: 0.95rem;
             margin-bottom: 25px;
             line-height: 1.6;
+            max-width: 440px;
         }
         .start-btn {
             background: linear-gradient(135deg, #2563eb, #38bdf8);
@@ -229,17 +362,37 @@
             font-weight: 700;
             cursor: pointer;
             box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
+            transition: transform 0.2s;
+        }
+        .start-btn:active {
+            transform: scale(0.96);
         }
     </style>
 </head>
 <body>
 
-    <!-- نافذة البدء وتفعيل الكاميرا -->
+    <!-- نافذة البدء وتفعيل الكاميرا والـ Audio -->
     <div class="start-modal" id="startModal">
         <div style="font-size: 3.5rem; margin-bottom: 12px;">🚗</div>
-        <h2>كاشف اللوحات اللحظي المباشر</h2>
-        <p>وجّه كاميرا هاتفك نحو أي سيارة، وسيقوم الذكاء الاصطناعي برصد اللوحة وقراءة الحروف والأرقام مباشرة في نفس اللحظة.</p>
-        <button class="start-btn" id="startBtn">تشغيل الكاميرا الحية 📸</button>
+        <h2>كاشف اللوحات الذكي المباشر</h2>
+        <div style="background: rgba(14, 165, 233, 0.2); border: 1px solid #0284c7; color: #38bdf8; font-size: 13px; font-weight: bold; padding: 4px 14px; border-radius: 20px; display: inline-block; margin-bottom: 14px;">
+            ⚡ إصدار V2.5 المباشر للآيفون
+        </div>
+        <p>وجّه كاميرا هاتفك نحو أي سيارة، وسيقوم الذكاء الاصطناعي برصد اللوحة، قراءة الحروف والأرقام، وتنبيهك فورياً إذا كانت السيارة مطلوبة أمنياً.</p>
+        <button class="start-btn" id="startBtn">تشغيل الكاميرا والسارينة 📸🚨</button>
+    </div>
+
+    <!-- وميض الخطر عند رصد سيارة مطلوبة -->
+    <div class="hazard-overlay" id="hazardOverlay"></div>
+
+    <!-- لافتة الإنذار الأمني الفوري المنبثقة -->
+    <div class="alert-modal" id="alertModal">
+        <div class="alert-icon-anim">🚨</div>
+        <div class="alert-text-area">
+            <div class="alert-title" id="alertTitle">مركبة مدرجة بالقائمة السوداء!</div>
+            <div class="alert-desc" id="alertDesc">تفاصيل البلاغ الأمني...</div>
+        </div>
+        <button class="alert-dismiss-btn" id="muteBtn" onclick="silenceAlert()">كتم 🔇</button>
     </div>
 
     <div class="camera-container">
@@ -249,30 +402,33 @@
                 <div class="pulse-dot"></div>
                 <span id="statusText">جاري المسح اللحظي...</span>
             </div>
-            <button class="flip-btn" id="flipBtn" title="تبديل الكاميرا">🔄</button>
+            <div class="top-actions">
+                <a href="/dashboard" class="action-btn" title="لوحة التحكم وسجل المركبات" target="_blank">📊</a>
+                <button class="action-btn" id="flipBtn" title="تبديل الكاميرا">🔄</button>
+            </div>
         </div>
 
-        <!-- شبكة التصويب -->
+        <!-- شبكة التصويب السينمائية -->
         <div class="reticle" id="reticle"></div>
 
-        <!-- تغذية الفيديو الأصلية من كاميرا الآيفون -->
+        <!-- تغذية الفيديو المباشرة -->
         <video id="video" autoplay playsinline muted></video>
 
-        <!-- طبقة الـ Canvas لرسم الصناديق المتتبعة فوق الفيديو -->
+        <!-- طبقة رسم الصناديق المتتبعة فوق الفيديو -->
         <canvas id="overlay"></canvas>
 
         <!-- بطاقة النتيجة الحية في الأسفل -->
-        <div class="bottom-card">
+        <div class="bottom-card" id="bottomCard">
             <div class="plate-label">
                 <span class="gov-badge" id="plateGovBadge">🚗 جاري المسح...</span>
                 <span class="fps-badge" id="fpsDisplay">-- FPS</span>
             </div>
             <div class="plate-display" id="plateDisplay">وجّه الكاميرا للوحة...</div>
-            <div class="plate-subdetail" id="plateSubDetail">نظام التدقيق الهندسي والقانوني للمرور المصري</div>
+            <div class="plate-subdetail" id="plateSubDetail">نظام التدقيق الهندسي والأمني للمرور المصري</div>
         </div>
     </div>
 
-    <!-- كانفاس غير مرئي لضغط وقص الفريمات وإرسالها للسيرفر -->
+    <!-- كانفاس غير مرئي لضغط ومعالجة الفريمات -->
     <canvas id="captureCanvas" style="display: none;"></canvas>
 
     <script>
@@ -285,19 +441,139 @@
         const plateDisplay = document.getElementById('plateDisplay');
         const plateGovBadge = document.getElementById('plateGovBadge');
         const plateSubDetail = document.getElementById('plateSubDetail');
+        const bottomCard = document.getElementById('bottomCard');
         const fpsDisplay = document.getElementById('fpsDisplay');
         const statusText = document.getElementById('statusText');
         const reticle = document.getElementById('reticle');
         const startModal = document.getElementById('startModal');
         const startBtn = document.getElementById('startBtn');
         const flipBtn = document.getElementById('flipBtn');
+        
+        const hazardOverlay = document.getElementById('hazardOverlay');
+        const alertModal = document.getElementById('alertModal');
+        const alertTitle = document.getElementById('alertTitle');
+        const alertDesc = document.getElementById('alertDesc');
+
+        // إلغاء أي Service Worker وكاش قديم فوراً لمنع حجب التحديثات
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(registrations => {
+                for (let r of registrations) r.unregister();
+            });
+        }
+        if ('caches' in window) {
+            caches.keys().then(keys => {
+                for (let k of keys) caches.delete(k);
+            });
+        }
 
         let ws = null;
         let isProcessing = false;
         let currentFacingMode = "environment"; // الكاميرا الخلفية تلقائياً
         let lastDetectedTime = 0;
+        let isMuted = false;
 
-        // مطابقة أبعاد الكانفاس لحجم الشاشة
+        // كشف نظام iOS (الآيفون والآيباد) للتحويل المباشر لنمط البث المستقر
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        let useHttpFallback = isIOS;
+        let wsConnectionTimeout = null;
+
+        // =============================================================
+        // نظام السارينة الصوتية التخليقية (Web Audio API Native Siren)
+        // =============================================================
+        let audioCtx = null;
+        let sirenOsc = null;
+        let sirenGain = null;
+        let sirenInterval = null;
+        let isSirenActive = false;
+
+        function initAudio() {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function triggerSiren(reason = "") {
+            if (isMuted) return;
+            initAudio();
+
+            hazardOverlay.classList.add('active');
+            alertModal.classList.add('active');
+            reticle.classList.add('hazard');
+            bottomCard.classList.add('hazard');
+            alertDesc.innerText = reason || "مركبة مطلوبة أمنياً - اشتباه أمني عالي الخطورة";
+
+            // اهتزاز الهاتف الفيزيائي (Haptic Feedback)
+            if (navigator.vibrate) {
+                navigator.vibrate([300, 100, 300, 100, 450]);
+            }
+
+            if (isSirenActive) return;
+            isSirenActive = true;
+
+            try {
+                sirenOsc = audioCtx.createOscillator();
+                sirenGain = audioCtx.createGain();
+
+                sirenOsc.type = 'sawtooth'; // صوت سارينة حاد
+                sirenGain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+
+                sirenOsc.connect(sirenGain);
+                sirenGain.connect(audioCtx.destination);
+                sirenOsc.start();
+
+                let highFreq = true;
+                sirenOsc.frequency.setValueAtTime(650, audioCtx.currentTime);
+
+                sirenInterval = setInterval(() => {
+                    if (!audioCtx || !sirenOsc) return;
+                    const now = audioCtx.currentTime;
+                    if (highFreq) {
+                        sirenOsc.frequency.linearRampToValueAtTime(950, now + 0.35);
+                    } else {
+                        sirenOsc.frequency.linearRampToValueAtTime(650, now + 0.35);
+                    }
+                    highFreq = !highFreq;
+                }, 350);
+            } catch (e) {
+                console.error("Audio error:", e);
+            }
+        }
+
+        function silenceAlert() {
+            isMuted = true;
+            stopSirenVisuals();
+            setTimeout(() => { isMuted = false; }, 8000); // إعادة تفعيل التنبيه بعد 8 ثوانٍ
+        }
+
+        function stopSirenVisuals() {
+            hazardOverlay.classList.remove('active');
+            alertModal.classList.remove('active');
+            reticle.classList.remove('hazard');
+            bottomCard.classList.remove('hazard');
+
+            if (!isSirenActive) return;
+            isSirenActive = false;
+
+            if (sirenInterval) {
+                clearInterval(sirenInterval);
+                sirenInterval = null;
+            }
+            if (sirenOsc) {
+                try {
+                    sirenOsc.stop();
+                    sirenOsc.disconnect();
+                } catch (e) {}
+                sirenOsc = null;
+            }
+        }
+
+        // =============================================================
+        // إعدادات الكاميرا والـ WebSocket
+        // =============================================================
         function resizeOverlay() {
             overlay.width = window.innerWidth;
             overlay.height = window.innerHeight;
@@ -305,8 +581,8 @@
         window.addEventListener('resize', resizeOverlay);
         resizeOverlay();
 
-        // تشغيل تدفق الكاميرا الحية
         async function startCamera() {
+            initAudio();
             try {
                 if (video.srcObject) {
                     video.srcObject.getTracks().forEach(track => track.stop());
@@ -323,51 +599,132 @@
                 video.srcObject = stream;
                 await video.play();
                 startModal.style.display = 'none';
-                connectWebSocket();
+                startStreaming();
             } catch (err) {
                 alert("❌ تعذر الوصول للكاميرا: " + err.message + "\nتأكد من السماح بالوصول للكاميرا في إعدادات المتصفح.");
             }
         }
 
-        // الاتصال بـ WebSocket السريع
+        function startStreaming() {
+            if (isIOS) {
+                console.log("iOS Safari detected, streaming directly via HTTP Live Stream.");
+                switchToHttpFallback();
+                return;
+            }
+
+            // للأجهزة الأخرى (أندرويد، ديسكتوب): تجربة الـ WebSocket أولاً
+            connectWebSocket();
+
+            wsConnectionTimeout = setTimeout(() => {
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    console.log("WebSocket timeout, activating HTTP stream fallback...");
+                    switchToHttpFallback();
+                }
+            }, 1000);
+        }
+
         function connectWebSocket() {
+            if (useHttpFallback) return;
             const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${proto}//${window.location.host}/ws/scanner`;
             
             statusText.innerText = "جاري الاتصال بالسيرفر...";
-            ws = new WebSocket(wsUrl);
+            try {
+                ws = new WebSocket(wsUrl);
 
-            ws.onopen = () => {
-                statusText.innerText = "متصل - جاري المسح اللحظي 🟢";
-                requestAnimationFrame(streamLoop);
-            };
+                ws.onopen = () => {
+                    if (wsConnectionTimeout) clearTimeout(wsConnectionTimeout);
+                    statusText.innerText = "متصل - جاري المسح اللحظي 🟢";
+                    requestAnimationFrame(streamLoop);
+                };
 
-            ws.onmessage = (event) => {
-                isProcessing = false;
-                try {
-                    const data = JSON.parse(event.data);
-                    handleDetectionResult(data);
-                } catch (e) {
-                    console.error("خطأ في معالجة النتيجة:", e);
-                }
-            };
+                ws.onmessage = (event) => {
+                    isProcessing = false;
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleDetectionResult(data);
+                    } catch (e) {
+                        console.error("خطأ في معالجة النتيجة:", e);
+                    }
+                };
 
-            ws.onclose = () => {
-                statusText.innerText = "انقطع الاتصال، جاري إعادة المحاولة...";
-                setTimeout(connectWebSocket, 2000);
-            };
+                ws.onclose = () => {
+                    if (!useHttpFallback) {
+                        console.warn("WebSocket closed, auto-switching to iPhone HTTP Live Stream...");
+                        switchToHttpFallback();
+                    }
+                };
 
-            ws.onerror = (err) => {
-                console.error("WS Error:", err);
-            };
+                ws.onerror = (err) => {
+                    console.warn("WebSocket error, auto-switching to iPhone HTTP Live Stream...", err);
+                    switchToHttpFallback();
+                };
+            } catch (err) {
+                switchToHttpFallback();
+            }
         }
 
-        // حلقة إرسال الفريمات بسرعة فائقة (بدون تأخير)
+        let isHttpStreaming = false;
+
+        function switchToHttpFallback() {
+            if (isHttpStreaming) return;
+            isHttpStreaming = true;
+            useHttpFallback = true;
+            if (wsConnectionTimeout) clearTimeout(wsConnectionTimeout);
+            if (ws) {
+                try { 
+                    ws.onclose = null;
+                    ws.onerror = null;
+                    ws.close(); 
+                } catch(e){}
+                ws = null;
+            }
+            statusText.innerText = "متصل بالآيفون - جاري المسح اللحظي 🟢";
+            isProcessing = false;
+            requestAnimationFrame(httpStreamLoop);
+        }
+
+        async function httpStreamLoop() {
+            if (video.readyState === video.HAVE_ENOUGH_DATA && !isProcessing) {
+                isProcessing = true;
+                
+                const sendW = 640;
+                const sendH = Math.round(video.videoHeight * (sendW / video.videoWidth)) || 480;
+                captureCanvas.width = sendW;
+                captureCanvas.height = sendH;
+                
+                captureCtx.drawImage(video, 0, 0, sendW, sendH);
+                const dataUrl = captureCanvas.toDataURL('image/jpeg', 0.72);
+
+                const t0 = performance.now();
+                try {
+                    const response = await fetch('/api/scan/live_frame', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ image: dataUrl })
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        const t1 = performance.now();
+                        data.fps = Math.round(1000 / Math.max(1, t1 - t0));
+                        statusText.innerText = "متصل بالآيفون - جاري المسح اللحظي 🟢";
+                        handleDetectionResult(data);
+                    }
+                } catch (e) {
+                    console.error("HTTP stream error:", e);
+                    statusText.innerText = "جاري إعادة الاتصال...";
+                } finally {
+                    isProcessing = false;
+                }
+            }
+            requestAnimationFrame(httpStreamLoop);
+        }
+
         function streamLoop() {
+            if (useHttpFallback) return;
             if (video.readyState === video.HAVE_ENOUGH_DATA && !isProcessing && ws && ws.readyState === WebSocket.OPEN) {
                 isProcessing = true;
                 
-                // دقة HD عالية الوضوح 720p مع ضغط خفيف 0.82 لإبراز تفاصيل الحروف الدقيقة
                 const sendW = 720;
                 const sendH = Math.round(video.videoHeight * (sendW / video.videoWidth)) || 480;
                 captureCanvas.width = sendW;
@@ -380,7 +737,9 @@
             requestAnimationFrame(streamLoop);
         }
 
-        // رسم النتائج والصناديق التتبعية فوق الكاميرا الحية
+        // =============================================================
+        // معالجة ورسم نتائج الذكاء الاصطناعي والتنبيه الأمني
+        // =============================================================
         function handleDetectionResult(data) {
             ctx.clearRect(0, 0, overlay.width, overlay.height);
 
@@ -388,28 +747,39 @@
                 fpsDisplay.innerText = `${data.fps} FPS`;
             }
 
+            // فحص وجود تنبيه أمني عاجل
+            if (data.alert && data.alert_info) {
+                triggerSiren(data.alert_info.reason);
+            }
+
             if (data.success && data.plates && data.plates.length > 0) {
-                reticle.classList.add('locked');
                 lastDetectedTime = Date.now();
                 
-                // حساب معامل التكبير بين الفريم المرسل وأبعاد الشاشة الفعلية
                 const scaleX = overlay.width / data.frame_w;
                 const scaleY = overlay.height / data.frame_h;
 
+                let hasBlacklistInView = false;
+
                 data.plates.forEach(plate => {
+                    const isBL = plate.is_blacklist;
+                    if (isBL) hasBlacklistInView = true;
+
                     const [x1, y1, x2, y2] = plate.bbox;
                     const bx = x1 * scaleX;
                     const by = y1 * scaleY;
                     const bw = (x2 - x1) * scaleX;
                     const bh = (y2 - y1) * scaleY;
 
-                    // 1. رسم مستطيل اللوحة النيوني مع زوايا مضيئة
-                    ctx.strokeStyle = '#22c55e';
-                    ctx.lineWidth = 3;
+                    // 1. رسم المستطيل النيوني (أحمر إذا مطلوبة، أخضر إذا سليمة)
+                    const mainColor = isBL ? '#ef4444' : '#22c55e';
+                    const glowColor = isBL ? '#f87171' : '#4ade80';
+
+                    ctx.strokeStyle = mainColor;
+                    ctx.lineWidth = isBL ? 4 : 3;
                     ctx.strokeRect(bx, by, bw, bh);
 
                     // تأثير الزوايا المتوهجة (HUD Corners)
-                    ctx.fillStyle = '#4ade80';
+                    ctx.fillStyle = glowColor;
                     const cLen = Math.min(bw, bh) * 0.25;
                     ctx.fillRect(bx, by, cLen, 4);
                     ctx.fillRect(bx, by, 4, cLen);
@@ -421,37 +791,65 @@
                     ctx.fillRect(bx + bw - 4, by + bh - cLen, 4, cLen);
 
                     // 2. رسم شريط القراءة فوق اللوحة مباشرة
-                    const textLabel = plate.badge || plate.text || "Plate";
+                    const textLabel = isBL 
+                        ? `🚨 مطلوبة: ${plate.blacklist_reason || plate.badge}` 
+                        : (plate.badge || plate.text || "Plate");
+                    
                     ctx.font = "bold 15px Cairo";
                     const tWidth = ctx.measureText(textLabel).width;
                     
-                    ctx.fillStyle = plate.syntax_valid ? "rgba(15, 23, 42, 0.9)" : "rgba(30, 20, 10, 0.9)";
-                    ctx.fillRect(bx, Math.max(0, by - 32), tWidth + 16, 28);
+                    ctx.fillStyle = isBL ? "rgba(220, 38, 38, 0.95)" : "rgba(15, 23, 42, 0.9)";
+                    ctx.fillRect(bx, Math.max(0, by - 32), tWidth + 18, 28);
                     
-                    ctx.fillStyle = plate.syntax_valid ? "#4ade80" : "#38bdf8";
-                    ctx.fillText(textLabel, bx + 8, Math.max(20, by - 12));
+                    ctx.fillStyle = isBL ? "#ffffff" : (plate.syntax_valid ? "#4ade80" : "#38bdf8");
+                    ctx.fillText(textLabel, bx + 9, Math.max(20, by - 12));
 
                     // تحديث البطاقة الكبيرة في الأسفل
-                    if (plate.badge) {
+                    if (isBL) {
+                        plateGovBadge.innerText = "🚨 سيارة مطلوبة أمنياً!";
+                        plateGovBadge.style.color = "#ffffff";
+                        plateGovBadge.style.background = "rgba(239, 68, 68, 0.85)";
+                    } else if (plate.badge) {
                         plateGovBadge.innerText = plate.badge;
                         plateGovBadge.style.color = plate.syntax_valid ? "#4ade80" : "#facc15";
                         plateGovBadge.style.background = plate.syntax_valid ? "rgba(34, 197, 94, 0.2)" : "rgba(234, 179, 8, 0.2)";
                     }
+
                     if (plate.digits && plate.letters && plate.digits.length > 0) {
                         const dStr = plate.digits.join(' ');
                         const lStr = plate.letters.join(' ');
-                        plateDisplay.innerHTML = `<span style="color: #38bdf8;">${dStr}</span> <span style="color: #64748b; margin: 0 10px;">|</span> <span style="color: #4ade80;">${lStr}</span>`;
-                        plateSubDetail.innerText = plate.syntax_valid ? "🟢 لوحة مطابقة 100% للمواصفات المرورية المصرية" : "⚠️ جاري تثبيت وقراءة اللوحة...";
-                        plateSubDetail.style.color = plate.syntax_valid ? "#4ade80" : "#94a3b8";
+                        const numColor = isBL ? "#fca5a5" : "#38bdf8";
+                        const letColor = isBL ? "#ffffff" : "#4ade80";
+                        plateDisplay.innerHTML = `<span style="color: ${numColor};">${dStr}</span> <span style="color: #64748b; margin: 0 10px;">|</span> <span style="color: ${letColor};">${lStr}</span>`;
+                        
+                        if (isBL) {
+                            plateSubDetail.innerText = `🚨 ${plate.blacklist_reason}`;
+                            plateSubDetail.style.color = "#f87171";
+                        } else {
+                            plateSubDetail.innerText = plate.syntax_valid ? "🟢 لوحة مطابقة 100% للمواصفات المرورية المصرية" : "⚠️ جاري تثبيت وقراءة اللوحة...";
+                            plateSubDetail.style.color = plate.syntax_valid ? "#4ade80" : "#94a3b8";
+                        }
                     } else {
                         plateDisplay.innerText = plate.text || "Plate";
-                        plateDisplay.style.color = "#4ade80";
+                        plateDisplay.style.color = isBL ? "#ef4444" : "#4ade80";
                     }
                 });
+
+                if (hasBlacklistInView) {
+                    reticle.classList.add('hazard');
+                    reticle.classList.remove('locked');
+                } else {
+                    reticle.classList.add('locked');
+                    reticle.classList.remove('hazard');
+                }
+
             } else {
-                // إذا لم يتم رصد لوحة لمدة تزيد عن ثانية
+                // إذا لم يتم رصد أي لوحة لمدة تزيد عن ثانية
                 if (Date.now() - lastDetectedTime > 1200) {
                     reticle.classList.remove('locked');
+                    reticle.classList.remove('hazard');
+                    stopSirenVisuals();
+
                     plateDisplay.innerText = "وجّه الكاميرا للوحة...";
                     plateDisplay.style.color = "#f8fafc";
                     plateGovBadge.innerText = "🚗 جاري المسح...";
@@ -463,14 +861,15 @@
             }
         }
 
-        // زر البدء
+        // أزرار التحكم
         startBtn.addEventListener('click', startCamera);
 
-        // زر تبديل الكاميرا (الأمامية / الخلفية)
         flipBtn.addEventListener('click', () => {
             currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
             startCamera();
         });
+
+        // تم تعطيل تسجيل الـ Service Worker لضمان استلام أحدث كود دائماً دون تخزين محلي يعيق التحديثات
     </script>
 </body>
 </html>

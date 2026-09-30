@@ -1,13 +1,24 @@
+import os
+import sys
 import cv2
 import numpy as np
-import sys
+import matplotlib.pyplot as plt
+from PIL import Image, ImageDraw, ImageFont
+import arabic_reshaper
+from bidi.algorithm import get_display
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
+
 from ultralytics import YOLO
 
-sys.stdout.reconfigure(encoding='utf-8')
-
-plate_model = YOLO('best.pt')
-loc_model   = YOLO('best_char.pt')
-recog_model = YOLO('best_char_afterTuning.pt')
+# تحميل النماذج
+plate_model = YOLO(os.path.join(BASE_DIR, 'best.pt'))
+loc_model   = YOLO(os.path.join(BASE_DIR, 'best_char.pt'))
+recog_model = YOLO(os.path.join(BASE_DIR, 'best_char_afterTuning.pt'))
 
 char_map = {
     'alif': 'أ', 'baa': 'ب', 'taa': 'ت', 'thaa': 'ث', 'jeem': 'ج',
@@ -26,6 +37,16 @@ class_weight = {
     'faa': 2.5
 }
 
+font_path = "C:/Windows/Fonts/tahoma.ttf"
+if not os.path.exists(font_path):
+    font_path = "C:/Windows/Fonts/arial.ttf"
+
+def render_arabic_text(text: str) -> str:
+    try:
+        return get_display(arabic_reshaper.reshape(text))
+    except Exception:
+        return text
+
 def deskew_adaptive(crop):
     h, w = crop.shape[:2]
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
@@ -42,16 +63,12 @@ def deskew_adaptive(crop):
     return crop, 0.0
 
 def verify_digit_geometry(patch, cand_name, cand_score, candidate_list):
-    """التحقق الهندسي المجهري للأرقام الملتبسة"""
     gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
     _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     h, w = th.shape[:2]
     if h == 0 or w == 0: return cand_name
     
     cand_names_only = [c[1] for c in candidate_list]
-    
-    # 1. التحقق من رقم 1 ضد 2 (كما في صورة 4):
-    # رقم 1 هو عمود رأسي مستقيم ونحيف، ونسبة عرضه إلى ارتفاعه لا تتجاوز 0.34
     v_prof = np.sum(th > 0, axis=0)
     col_idx = np.where(v_prof > 0)[0]
     span = col_idx[-1] - col_idx[0] if len(col_idx) else w
@@ -60,18 +77,13 @@ def verify_digit_geometry(patch, cand_name, cand_score, candidate_list):
     if cand_name == '2' and aspect_stroke < 0.34 and ('1' in cand_names_only or 'alif' in cand_names_only or aspect_stroke < 0.28):
         return '1'
         
-    # 2. التحقق من رقم 7 ضد 3 (كما في صورة 3 مقابل صورة 5):
-    # رقم 3 في صورة 5 ثقته عالية جداً (0.75). أما في صورة 3 فثقته منخفضة (< 0.60) ويتنافس مع 6/7
     if cand_name == '3' and cand_score < 0.60 and ('6' in cand_names_only or '7' in cand_names_only or len(cand_names_only) < 3):
         return '7'
             
     return cand_name
 
 def verify_letter_geometry(patch, cand_name, all_detected_letters, candidate_list, all_letter_patches):
-    """التحقق الهندسي والسياقي للحروف الملتبسة وتطابق التوائم"""
-    # فحص القاف ضد الجيم (كما في صورة 8):
     if cand_name in ['jeem', 'yaa'] and 'qaaf' in all_detected_letters:
-        # فحص التطابق الشكلي (Template Correlation) مع حرف القاف المؤكد الآخر على اللوحة
         g_cur = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
         r_cur = cv2.resize(g_cur, (30, 40))
         for other_name, other_patch in all_letter_patches:
@@ -84,11 +96,18 @@ def verify_letter_geometry(patch, cand_name, all_detected_letters, candidate_lis
                 
     return cand_name
 
-def process_verified(fn):
-    p = plate_model(fn, verbose=False)[0]
+def read_egyptian_plate_multipass(fn):
+    full_path = os.path.join(BASE_DIR, fn)
+    if not os.path.exists(full_path):
+        return None, "File Not Found", 0.0
+    
+    p = plate_model(full_path, verbose=False)[0]
+    if len(p.boxes) == 0:
+        return None, "No Plate Detected", 0.0
+        
     b = p.boxes.xyxy[0]
     crop = p.orig_img[int(b[1]):int(b[3]), int(b[0]):int(b[2])]
-    crop_rot, _ = deskew_adaptive(crop)
+    crop_rot, angle = deskew_adaptive(crop)
     h, w = crop_rot.shape[:2]
     
     pass1 = cv2.resize(crop_rot, (w * 4, h * 4), interpolation=cv2.INTER_LANCZOS4)
@@ -128,7 +147,6 @@ def process_verified(fn):
     elif n == 5: split_idx = 2
     else: split_idx = n // 2
     
-    # Step 1: Matching
     stage1_cands = []
     stage1_scores = []
     box_cands_map = []
@@ -155,7 +173,7 @@ def process_verified(fn):
     detected_letters = [c for i, c in enumerate(stage1_cands) if i > split_idx]
     all_letter_patches = [(stage1_cands[i], pass1[ly1:ly2, lx1:lx2]) for i, (lx1, ly1, lx2, ly2) in enumerate(clean_b) if i > split_idx]
     
-    # Step 2: Multi-Step Micro-Geometric Verification
+    annotated = pass1.copy()
     nums, lets = [], []
     for i, (lx1, ly1, lx2, ly2) in enumerate(clean_b):
         is_digit = (i <= split_idx)
@@ -167,15 +185,78 @@ def process_verified(fn):
         if is_digit:
             verified = verify_digit_geometry(patch, cand, score, box_cands)
             nums.append(char_map.get(verified, '?'))
+            label_text = char_map.get(verified, verified)
         else:
             verified = verify_letter_geometry(patch, cand, detected_letters, box_cands, all_letter_patches)
             lets.append(char_map.get(verified, '?'))
+            label_text = char_map.get(verified, verified)
             
+        color = (0, 220, 0) if is_digit else (255, 120, 0)
+        cv2.rectangle(annotated, (lx1, ly1), (lx2, ly2), color, 3)
+        
+    # رسم الحروف العربية فوق البوكسات بدقة بواسطة PIL
+    annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(annotated_rgb)
+    draw = ImageDraw.Draw(pil_img)
+    font_char = ImageFont.truetype(font_path, 22)
+    
+    for i, (lx1, ly1, lx2, ly2) in enumerate(clean_b):
+        is_digit = (i <= split_idx)
+        color = (0, 255, 100) if is_digit else (255, 160, 0)
+        label_char = nums[i] if is_digit else lets[i - (split_idx + 1)]
+        reshaped = render_arabic_text(label_char)
+        # خلفية سوداء للنص لسهولة القراءة
+        draw.rectangle([lx1, max(0, ly1 - 28), lx1 + 28, ly1], fill=(0, 0, 0, 220))
+        draw.text((lx1 + 4, max(0, ly1 - 28)), reshaped, font=font_char, fill=color)
+
+    annotated = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
     num_txt = ' '.join(nums)
     let_txt = ' '.join(reversed(lets))
-    return f'[{num_txt}] | [{let_txt}]'
+    result_text = f'[{num_txt}] | [{let_txt}]'
+    return annotated, result_text, angle
 
-for i in range(1, 10):
-    fn = f'{i}.jpg'
-    res = process_verified(fn)
-    print(f'{fn:<6}: {res}')
+def generate_montage():
+    print("🚀 جاري معالجة اللوحات من 1 إلى 9 ورسم النتيجة بالكامل مع الموديل الجديد...")
+    fig, axes = plt.subplots(3, 3, figsize=(17, 11))
+    fig.patch.set_facecolor('#0f172a') # خلفية عصرية غامقة
+
+    for idx in range(1, 10):
+        img_name = f"{idx}.jpg"
+        r = (idx - 1) // 3
+        c = (idx - 1) % 3
+        
+        viz, plate_str, ang = read_egyptian_plate_multipass(img_name)
+        print(f" 📷 {img_name:<6} ({ang:.1f}°) ➔ {plate_str}")
+        
+        ax = axes[r, c]
+        ax.set_facecolor('#1e293b')
+        
+        if viz is not None:
+            ax.imshow(cv2.cvtColor(viz, cv2.COLOR_BGR2RGB))
+            # تنسيق العنوان
+            title_text = f"{img_name} ➔ {plate_str}"
+            ax.set_title(title_text, fontsize=12, weight='bold', color='#38bdf8', pad=8)
+        else:
+            ax.text(0.5, 0.5, plate_str, ha='center', va='center', color='red', fontsize=12)
+            ax.set_title(img_name, fontsize=12, color='red')
+            
+        ax.axis('off')
+
+    plt.suptitle("🔥 نتائج الموديل المطور (best_char_afterTuning.pt) على اللوحات من 1 إلى 9", 
+                 fontsize=16, weight='bold', color='#f8fafc', y=0.99)
+    plt.tight_layout()
+    
+    out_local = os.path.join(BASE_DIR, 'batch_results_1_to_9_after_tuning.jpg')
+    plt.savefig(out_local, dpi=160, bbox_inches='tight', facecolor=fig.get_facecolor())
+    print(f"✅ تم حفظ الصورة المجمعة محلياً في: {out_local}")
+    
+    # حفظ في مجلد الـ Artifacts أيضاً للعرض المباشر
+    art_dir = r"C:\Users\Omar\.gemini\antigravity-ide\brain\80eb1de8-0e0c-401f-97c8-b20498617d02"
+    if os.path.exists(art_dir):
+        out_art = os.path.join(art_dir, 'batch_results_1_to_9_after_tuning.jpg')
+        plt.savefig(out_art, dpi=160, bbox_inches='tight', facecolor=fig.get_facecolor())
+        print(f"✅ تم حفظ الصورة في مجلد الـ Artifacts: {out_art}")
+
+if __name__ == '__main__':
+    generate_montage()

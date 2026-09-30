@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>أداة التحقق والمراجعة الذكية للوحات | ALPR Dataset Reviewer</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Outfit:wght@600;800;900&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-main: #090d16;
+            --bg-card: rgba(18, 26, 43, 0.88);
+            --border-glass: rgba(56, 189, 248, 0.2);
+            --accent-cyan: #38bdf8;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Cairo', 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            min-height: 100vh;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.08) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(34, 197, 94, 0.06) 0px, transparent 50%);
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* شريط التنقل */
+        .header {
+            background: rgba(15, 23, 42, 0.92);
+            backdrop-filter: blur(14px);
+            border-bottom: 1px solid var(--border-glass);
+            padding: 14px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-icon {
+            font-size: 1.8rem;
+        }
+
+        .brand-title {
+            font-size: 1.15rem;
+            font-weight: 800;
+        }
+
+        .brand-sub {
+            font-size: 0.75rem;
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn-nav {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid var(--border-glass);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 700;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .btn-nav:hover {
+            background: rgba(56, 189, 248, 0.2);
+        }
+
+        /* شريط التقدم */
+        .progress-bar-container {
+            width: 100%;
+            height: 5px;
+            background: rgba(30, 41, 59, 0.6);
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #38bdf8, #22c55e);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        /* إشعار الحفظ */
+        .toast-notify {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: rgba(15, 23, 42, 0.95);
+            border: 1.5px solid #22c55e;
+            color: #4ade80;
+            padding: 12px 22px;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 0.92rem;
+            box-shadow: 0 8px 25px rgba(34, 197, 94, 0.35);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 300;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .toast-notify.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        /* المحتوى الرئيسي */
+        .main-content {
+            flex: 1;
+            max-width: 1050px;
+            width: 100%;
+            margin: 20px auto;
+            padding: 0 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* كارت المراجعة */
+        .review-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border-glass);
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            position: relative;
+        }
+
+        .status-pill {
+            position: absolute;
+            top: 20px;
+            right: 24px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 14px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 700;
+        }
+
+        .pill-verified {
+            background: rgba(34, 197, 94, 0.15);
+            color: #22c55e;
+            border: 1px solid rgba(34, 197, 94, 0.35);
+        }
+
+        .pill-candidate {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+            border: 1px solid rgba(245, 158, 11, 0.35);
+        }
+
+        .counter-badge {
+            position: absolute;
+            top: 20px;
+            left: 24px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.95rem;
+            color: var(--text-muted);
+            font-weight: 700;
+        }
+
+        /* نافذة عرض صورة اللوحة الأصلية */
+        .plate-img-wrapper {
+            margin: 28px 0 16px 0;
+            width: 100%;
+            max-width: 640px;
+            min-height: 180px;
+            background: #000;
+            border-radius: 14px;
+            border: 2px solid rgba(56, 189, 248, 0.35);
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        }
+
+        .plate-img-wrapper img {
+            width: 100%;
+            height: auto;
+            max-height: 280px;
+            object-fit: contain;
+        }
+
+        /* مجسم اللوحة المصرية الحقيقي في الواجهة */
+        .plate-hud-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #ffffff;
+            color: #0f172a;
+            border: 3px solid #0f172a;
+            border-radius: 14px;
+            padding: 8px 24px;
+            margin: 12px 0 8px 0;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+            direction: ltr !important; /* من اليسار لليمين كالصورة تماماً */
+            gap: 16px;
+        }
+
+        .plate-hud-digits {
+            display: flex;
+            gap: 10px;
+            font-size: 2.3rem;
+            font-weight: 900;
+            color: #0284c7;
+            letter-spacing: 2px;
+            direction: ltr !important;
+        }
+
+        .plate-hud-line {
+            width: 3px;
+            height: 48px;
+            background: #0f172a;
+            border-radius: 2px;
+        }
+
+        .plate-hud-letters {
+            display: flex;
+            gap: 12px;
+            font-size: 2.3rem;
+            font-weight: 900;
+            color: #0f172a;
+            direction: rtl !important; /* الحروف تُقرأ من اليمين لليسار */
+            letter-spacing: 2px;
+        }
+
+        /* شريط الخانات التفاعلية للتعديل (مطابق أفقياً بنسبة 100% للصورة) */
+        .interactive-section-title {
+            font-size: 0.82rem;
+            color: var(--accent-cyan);
+            font-weight: 700;
+            margin-top: 6px;
+            margin-bottom: 10px;
+        }
+
+        .chars-strip-ltr {
+            display: flex;
+            direction: ltr !important; /* إجباري: اليسار يطابق يسار الصورة واليمين يطابق يمين الصورة */
+            gap: 10px;
+            margin-bottom: 22px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+        }
+
+        .char-box-card {
+            background: rgba(30, 41, 59, 0.85);
+            border: 1.5px solid var(--border-glass);
+            padding: 8px 14px;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 68px;
+            position: relative;
+        }
+
+        .char-box-card:hover {
+            border-color: var(--accent-cyan);
+            transform: translateY(-3px);
+            box-shadow: 0 4px 15px rgba(56, 189, 248, 0.4);
+            background: rgba(40, 55, 80, 0.95);
+        }
+
+        .char-glyph {
+            font-size: 1.4rem;
+            font-weight: 900;
+        }
+
+        .char-pos-label {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            margin-top: 3px;
+            font-weight: 700;
+        }
+
+        .char-edit-badge {
+            font-size: 0.6rem;
+            color: var(--accent-cyan);
+            font-weight: 600;
+            margin-top: 1px;
+        }
+
+        .strip-divider-line {
+            width: 2px;
+            height: 52px;
+            background: rgba(255, 255, 255, 0.25);
+            margin: 0 6px;
+        }
+
+        /* أزرار التحكم والاعتماد */
+        .action-controls {
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+            justify-content: center;
+            width: 100%;
+            margin-top: 6px;
+        }
+
+        .btn-action {
+            padding: 12px 28px;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            font-weight: 800;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-confirm {
+            background: linear-gradient(135deg, #16a34a, #22c55e);
+            color: white;
+            box-shadow: 0 4px 15px rgba(34, 197, 94, 0.35);
+        }
+
+        .btn-confirm:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(34, 197, 94, 0.5);
+        }
+
+        .btn-discard {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.4);
+        }
+
+        .btn-discard:hover {
+            background: rgba(239, 68, 68, 0.25);
+        }
+
+        .btn-nav-step {
+            background: rgba(30, 41, 59, 0.8);
+            color: var(--text-main);
+            border: 1px solid var(--border-glass);
+        }
+
+        .btn-nav-step:hover {
+            background: rgba(56, 189, 248, 0.15);
+            border-color: var(--accent-cyan);
+        }
+
+        .shortcuts-hint {
+            margin-top: 18px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .kbd {
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-family: 'Outfit';
+            font-weight: 700;
+            color: var(--accent-cyan);
+        }
+
+        /* نافذة اختيار وتصحيح الحرف المنبثقة */
+        .picker-modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 250;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease;
+        }
+
+        .picker-modal-overlay.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .picker-card {
+            background: #0f172a;
+            border: 2px solid var(--accent-cyan);
+            border-radius: 20px;
+            padding: 24px;
+            width: 92%;
+            max-width: 520px;
+            box-shadow: 0 15px 40px rgba(56, 189, 248, 0.3);
+            text-align: right;
+        }
+
+        .picker-title {
+            font-size: 1.15rem;
+            font-weight: 800;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .picker-sec-label {
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            margin: 14px 0 8px 0;
+            font-weight: 700;
+        }
+
+        .picker-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+            gap: 8px;
+        }
+
+        .picker-btn {
+            background: rgba(30, 41, 59, 0.9);
+            border: 1px solid var(--border-glass);
+            color: white;
+            padding: 10px 0;
+            border-radius: 10px;
+            font-size: 1.3rem;
+            font-weight: 900;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .picker-btn:hover {
+            background: #0284c7;
+            transform: scale(1.1);
+            border-color: #38bdf8;
+        }
+
+        .picker-btn.digit-btn {
+            color: #38bdf8;
+        }
+
+        .picker-btn.letter-btn {
+            color: #4ade80;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- الشريط العلوي -->
+    <header class="header">
+        <div class="brand">
+            <div class="brand-icon">🎯</div>
+            <div>
+                <div class="brand-title">أداة المراجعة وتعديل الـ Labels بالداتا سيت</div>
+                <div class="brand-sub">تطابق مكاني 100% مع الصورة وتعديل فوري لملف YOLO .txt على القرص</div>
+            </div>
+        </div>
+        <div class="header-actions">
+            <button class="btn-nav" style="background:#22c55e; border:none;" onclick="exportDatasetZip()">📦 تحميل حزمة التدريب (Zip)</button>
+            <a href="/dashboard" class="btn-nav">لوحة التحكم 📊</a>
+            <a href="/scanner" class="btn-nav">الكاميرا 📷</a>
+        </div>
+    </header>
+
+    <div class="progress-bar-container">
+        <div class="progress-fill" id="progressBar"></div>
+    </div>
+
+    <!-- إشعار الحفظ اللحظي على الهارد ديسك -->
+    <div class="toast-notify" id="toastNotify">
+        <span>💾 تم تحديث وحفظ ملف الـ Label بنجاح على القرص!</span>
+    </div>
+
+    <main class="main-content">
+        <div class="review-card" id="cardArea">
+            <div class="counter-badge" id="counterText">0 / 0</div>
+            <div class="status-pill pill-verified" id="statusPill">🟢 متطابقة مع المرور</div>
+
+            <!-- صورة اللوحة الأصلية -->
+            <div class="plate-img-wrapper">
+                <img id="plateImage" src="" alt="Plate Crop">
+            </div>
+
+            <!-- مجسم اللوحة المصرية: أرقام على اليسار | حروف على اليمين كالصورة تماماً -->
+            <div class="plate-hud-container">
+                <div class="plate-hud-digits" id="hudDigits"></div>
+                <div class="plate-hud-line"></div>
+                <div class="plate-hud-letters" id="hudLetters"></div>
+            </div>
+            
+            <div style="color: #38bdf8; font-weight: 700; font-size: 0.9rem; margin-bottom: 8px;" id="govText">المحافظة: غير محدد</div>
+
+            <div class="interactive-section-title">
+                👇 الخانات مرتبة من اليسار لليمين بمطابقة تامة مع صورة اللوحة أعلاها (اضغط لتعديل أي خانة):
+            </div>
+
+            <!-- شريط الخانات المكانية من اليسار لليمين -->
+            <div class="chars-strip-ltr" id="charsStrip"></div>
+
+            <!-- أزرار التحكم -->
+            <div class="action-controls">
+                <button class="btn-action btn-confirm" onclick="confirmCurrentPlate()">
+                    <span>✅ تأكيد واعتماد</span>
+                    <span class="kbd" style="color:white; background:rgba(0,0,0,0.25);">Space</span>
+                </button>
+                <button class="btn-action btn-discard" onclick="discardCurrentPlate()">
+                    <span>🗑️ استبعاد اللوحة</span>
+                    <span class="kbd">D</span>
+                </button>
+                <button class="btn-action btn-nav-step" onclick="prevPlate()">⬅️ السابقة</button>
+                <button class="btn-action btn-nav-step" onclick="nextPlate()">التالية ➡️</button>
+            </div>
+
+            <!-- تلميحات لوحة المفاتيح -->
+            <div class="shortcuts-hint">
+                <span>تأكيد وانتقال: <span class="kbd">Space</span> أو <span class="kbd">Enter</span></span>
+                <span>استبعاد الصورة: <span class="kbd">D</span></span>
+                <span>التنقل: <span class="kbd">→</span> و <span class="kbd">←</span></span>
+            </div>
+        </div>
+    </main>
+
+    <!-- نافذة اختيار وتصحيح الحرف المنبثقة -->
+    <div class="picker-modal-overlay" id="pickerModal" onclick="closePickerOnOverlay(event)">
+        <div class="picker-card">
+            <div class="picker-title">
+                <span id="pickerHeaderTitle">اختر الحرف أو الرقم الصحيح:</span>
+                <button style="background:transparent; border:none; color:#ef4444; font-size:1.4rem; cursor:pointer;" onclick="closePicker()">✖</button>
+            </div>
+
+            <div id="pickerDigitsSection">
+                <div class="picker-sec-label">الأرقام المصرية الرسمية (Digits):</div>
+                <div class="picker-grid" id="digitsPicker"></div>
+            </div>
+
+            <div id="pickerLettersSection">
+                <div class="picker-sec-label">الحروف المصرية المعتمدة قانوناً (17 حرف):</div>
+                <div class="picker-grid" id="lettersPicker"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let reviewItems = [];
+        let currentIndex = 0;
+        let selectedCharIndex = -1;
+
+        const OFFICIAL_DIGITS = ['١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+        const OFFICIAL_LETTERS = ['أ', 'ب', 'ج', 'د', 'ر', 'س', 'ص', 'ط', 'ع', 'ف', 'ق', 'ل', 'م', 'ن', 'هـ', 'و', 'ي'];
+
+        function initPickerButtons() {
+            const dGrid = document.getElementById('digitsPicker');
+            dGrid.innerHTML = OFFICIAL_DIGITS.map(d => `
+                <button class="picker-btn digit-btn" onclick="applyCharCorrection('${d}')">${d}</button>
+            `).join('');
+
+            const lGrid = document.getElementById('lettersPicker');
+            lGrid.innerHTML = OFFICIAL_LETTERS.map(l => `
+                <button class="picker-btn letter-btn" onclick="applyCharCorrection('${l}')">${l}</button>
+            `).join('');
+        }
+        initPickerButtons();
+
+        async function loadReviewData() {
+            try {
+                const res = await fetch('/api/review/items');
+                reviewItems = await res.json();
+                if (reviewItems.length > 0) {
+                    renderItem(0);
+                } else {
+                    document.getElementById('cardArea').innerHTML = `<h3>لا توجد صور بحاجة للمراجعة حالياً.</h3>`;
+                }
+            } catch (e) {
+                console.error("خطأ في تحميل البيانات:", e);
+            }
+        }
+
+        function renderItem(idx) {
+            if (idx < 0 || idx >= reviewItems.length) return;
+            currentIndex = idx;
+            const item = reviewItems[idx];
+
+            document.getElementById('counterText').innerText = `${idx + 1} / ${reviewItems.length}`;
+            document.getElementById('plateImage').src = item.img_url;
+            document.getElementById('govText').innerText = `المحافظة: ${item.governorate || 'غير محدد'} | الكود: ${item.badge || '-'}`;
+
+            // شارة الحالة
+            const pill = document.getElementById('statusPill');
+            if (item.syntax_valid) {
+                pill.className = "status-pill pill-verified";
+                pill.innerText = "🟢 متطابقة مع المرور المصري";
+            } else {
+                pill.className = "status-pill pill-candidate";
+                pill.innerText = "⚠️ بحاجة لمراجعة دقيقة";
+            }
+
+            // 1. بناء مجسم اللوحة (Digits on Left | Letters on Right)
+            const digits = (item.chars || []).filter(c => c.is_digit);
+            const letters = (item.chars || []).filter(c => !c.is_digit);
+
+            const hudDigitsEl = document.getElementById('hudDigits');
+            hudDigitsEl.innerHTML = digits.map(d => `<span>${d.arabic || d.name}</span>`).join(' ');
+
+            const hudLettersEl = document.getElementById('hudLetters');
+            // الحروف تُعرض بترتيب القراءة العربي من اليمين لليسار
+            const revLetters = [...letters].reverse();
+            hudLettersEl.innerHTML = revLetters.map(l => `<span>${l.arabic || l.name}</span>`).join(' ');
+
+            // 2. بناء شريط الخانات المكانية التفاعلية من اليسار لليمين مطابقة للصورة تماماً
+            const strip = document.getElementById('charsStrip');
+            let stripHtml = '';
+            let reachedLetters = false;
+
+            (item.chars || []).forEach((c, cIdx) => {
+                // إذا وصلنا لأول حرف بعد الأرقام، نضع خط فاصل مثل اللوحة تماماً
+                if (!c.is_digit && !reachedLetters) {
+                    reachedLetters = true;
+                    stripHtml += `<div class="strip-divider-line" title="الخط الفاصل للوحة"></div>`;
+                }
+
+                const posName = c.is_digit 
+                    ? `رقم (يسار)` 
+                    : (cIdx === item.chars.length - 1 ? `حرف (أقصى اليمين)` : `حرف`);
+
+                stripHtml += `
+                    <div class="char-box-card" onclick="openPicker(${cIdx})" title="الخانة ${cIdx + 1} بالصورة">
+                        <span class="char-glyph" style="color: ${c.is_digit ? '#38bdf8' : '#4ade80'};">${c.arabic || c.name}</span>
+                        <span class="char-pos-label">خانة ${cIdx + 1}</span>
+                        <span class="char-edit-badge">تعديل ✏️</span>
+                    </div>
+                `;
+            });
+
+            strip.innerHTML = stripHtml;
+
+            const pct = ((idx + 1) / reviewItems.length) * 100;
+            document.getElementById('progressBar').style.width = `${pct}%`;
+        }
+
+        function openPicker(charIdx) {
+            selectedCharIndex = charIdx;
+            const item = reviewItems[currentIndex];
+            const c = item.chars[charIdx];
+
+            document.getElementById('pickerHeaderTitle').innerText = `تعديل الخانة رقم ${charIdx + 1} [${c.arabic || c.name}]:`;
+            
+            // تسليط الضوء على القسم المناسب (أرقام أو حروف)
+            if (c.is_digit) {
+                document.getElementById('pickerDigitsSection').style.display = 'block';
+                document.getElementById('pickerLettersSection').style.display = 'block';
+            } else {
+                document.getElementById('pickerDigitsSection').style.display = 'block';
+                document.getElementById('pickerLettersSection').style.display = 'block';
+            }
+
+            document.getElementById('pickerModal').classList.add('active');
+        }
+
+        function closePicker() {
+            document.getElementById('pickerModal').classList.remove('active');
+            selectedCharIndex = -1;
+        }
+
+        function closePickerOnOverlay(e) {
+            if (e.target.id === 'pickerModal') closePicker();
+        }
+
+        async function applyCharCorrection(newChar) {
+            if (selectedCharIndex < 0 || currentIndex < 0) return;
+            const item = reviewItems[currentIndex];
+            const charIdx = selectedCharIndex;
+            closePicker();
+
+            try {
+                // إرسال التعديل ليتم تعديل ملف الـ YOLO .txt على القرص فوراً
+                const res = await fetch('/api/review/update_char', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        filename: item.filename,
+                        char_index: charIdx,
+                        new_char: newChar
+                    })
+                });
+
+                const data = await res.json();
+                if (data.success && data.updated_item) {
+                    reviewItems[currentIndex] = data.updated_item;
+                    renderItem(currentIndex);
+                    showToast(`✅ تم تعديل الخانة ${charIdx + 1} إلى [${newChar}] وحفظ ملف YOLO .txt على القرص فوراً!`);
+                } else {
+                    alert("تعذر حفظ التعديل على القرص.");
+                }
+            } catch (e) {
+                alert("خطأ في الاتصال بالسيرفر: " + e);
+            }
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toastNotify');
+            toast.innerText = msg;
+            toast.classList.add('show');
+            setTimeout(() => { toast.classList.remove('show'); }, 3000);
+        }
+
+        function confirmCurrentPlate() {
+            fetch('/api/review/confirm', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ filename: reviewItems[currentIndex].filename, action: 'confirm' })
+            });
+            nextPlate();
+        }
+
+        function discardCurrentPlate() {
+            fetch('/api/review/confirm', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ filename: reviewItems[currentIndex].filename, action: 'discard' })
+            });
+            nextPlate();
+        }
+
+        function nextPlate() {
+            if (currentIndex + 1 < reviewItems.length) {
+                renderItem(currentIndex + 1);
+            } else {
+                alert("🎉 أحسنت! انتهيت من مراجعة كافة اللوحات بنجاح!");
+            }
+        }
+
+        function prevPlate() {
+            if (currentIndex - 1 >= 0) {
+                renderItem(currentIndex - 1);
+            }
+        }
+
+        function exportDatasetZip() {
+            window.location.href = '/api/review/export_zip';
+        }
+
+        // اختصارات الكيبورد
+        window.addEventListener('keydown', (e) => {
+            if (document.getElementById('pickerModal').classList.contains('active')) {
+                if (e.key === 'Escape') closePicker();
+                return;
+            }
+
+            if (e.code === 'Space' || e.code === 'Enter') {
+                e.preventDefault();
+                confirmCurrentPlate();
+            } else if (e.code === 'KeyD') {
+                e.preventDefault();
+                discardCurrentPlate();
+            } else if (e.code === 'ArrowRight') {
+                e.preventDefault();
+                nextPlate();
+            } else if (e.code === 'ArrowLeft') {
+                e.preventDefault();
+                prevPlate();
+            }
+        });
+
+        loadReviewData();
+    </script>
+</body>
+</html>

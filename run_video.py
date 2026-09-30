@@ -7,7 +7,7 @@ from ultralytics import YOLO
 # =============================================================
 plate_model = YOLO("best.pt")        # الموديل الأول: كاشف مكان اللوحة في الشارع/السيارة
 loc_model   = YOLO("best_char.pt")   # الموديل الثاني: كاشف مواضع الخانات المادية (أرقام وحروف)
-recog_model = YOLO("Tuning_char.pt") # الموديل الثالث: مصنف الحروف والأرقام
+recog_model = YOLO("best_char_afterTuning.pt") # الموديل الثالث: مصنف الحروف والأرقام الجديد بعد الضبط الدقيق
 
 char_map = {
     'alif': 'أ', 'baa': 'ب', 'taa': 'ت', 'thaa': 'ث', 'jeem': 'ج',

@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة التحكم وسجل المركبات | Egyptian ALPR Dashboard</title>
+    
+    <!-- Google Fonts: Cairo & Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-main: #090d16;
+            --bg-card: rgba(18, 26, 43, 0.75);
+            --bg-card-hover: rgba(26, 38, 62, 0.85);
+            --border-glass: rgba(56, 189, 248, 0.18);
+            --accent-cyan: #38bdf8;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --accent-amber: #f59e0b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Cairo', 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            min-height: 100vh;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.08) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(34, 197, 94, 0.06) 0px, transparent 50%);
+            background-attachment: fixed;
+            overflow-x: hidden;
+        }
+
+        /* شريط التنقل العلوي */
+        .navbar {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--border-glass);
+            padding: 16px 28px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .brand-area {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .brand-logo {
+            font-size: 1.8rem;
+            background: linear-gradient(135deg, #0284c7, #38bdf8);
+            width: 46px;
+            height: 46px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 15px rgba(2, 132, 199, 0.4);
+        }
+
+        .brand-title {
+            font-size: 1.25rem;
+            font-weight: 800;
+            color: #f8fafc;
+            letter-spacing: -0.5px;
+        }
+
+        .brand-subtitle {
+            font-size: 0.75rem;
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        .nav-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .btn-live-scanner {
+            background: linear-gradient(135deg, #0284c7, #2563eb);
+            color: white;
+            padding: 9px 18px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-size: 0.88rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+            transition: all 0.25s ease;
+        }
+
+        .btn-live-scanner:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(2, 132, 199, 0.55);
+        }
+
+        /* الحاوية الرئيسية */
+        .main-container {
+            max-width: 1400px;
+            margin: 28px auto;
+            padding: 0 20px;
+        }
+
+        /* كروت الإحصائيات العلوية */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 28px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border-glass);
+            border-radius: 18px;
+            padding: 20px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+            transition: transform 0.25s ease, border-color 0.25s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-3px);
+            border-color: rgba(56, 189, 248, 0.45);
+        }
+
+        .stat-info h4 {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .stat-info .stat-num {
+            font-size: 2.2rem;
+            font-weight: 900;
+            color: #ffffff;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .stat-icon {
+            width: 52px;
+            height: 52px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.6rem;
+        }
+
+        .icon-blue { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+        .icon-red { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+        .icon-green { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+        .icon-amber { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+
+        /* التبويبات */
+        .tabs-nav {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border-glass);
+            padding-bottom: 12px;
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 8px 18px;
+            font-size: 0.95rem;
+            font-weight: 700;
+            cursor: pointer;
+            border-radius: 10px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .tab-btn.active {
+            background: rgba(56, 189, 248, 0.15);
+            color: var(--accent-cyan);
+            border: 1px solid rgba(56, 189, 248, 0.35);
+        }
+
+        /* شريط البحث والتحكم */
+        .table-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+
+        .search-box {
+            position: relative;
+            flex: 1;
+            max-width: 420px;
+        }
+
+        .search-box input {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid var(--border-glass);
+            padding: 11px 18px;
+            padding-left: 38px;
+            border-radius: 12px;
+            color: white;
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .search-box input:focus {
+            border-color: var(--accent-cyan);
+        }
+
+        .actions-bar {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-action {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid var(--border-glass);
+            color: var(--text-main);
+            padding: 10px 16px;
+            border-radius: 10px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-action:hover {
+            background: rgba(56, 189, 248, 0.2);
+            border-color: var(--accent-cyan);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            border: none;
+            color: white;
+        }
+        .btn-primary:hover {
+            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
+        }
+
+        /* جدول سجل المركبات */
+        .glass-table-wrapper {
+            background: var(--bg-card);
+            backdrop-filter: blur(14px);
+            border: 1px solid var(--border-glass);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: right;
+        }
+
+        th {
+            background: rgba(15, 23, 42, 0.95);
+            color: var(--text-muted);
+            font-size: 0.82rem;
+            font-weight: 700;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-glass);
+        }
+
+        td {
+            padding: 16px 20px;
+            font-size: 0.9rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            vertical-align: middle;
+        }
+
+        tr:hover td {
+            background: rgba(56, 189, 248, 0.04);
+        }
+
+        /* تصميم شارة اللوحة داخل الجدول */
+        .plate-chip {
+            display: inline-flex;
+            align-items: center;
+            background: #ffffff;
+            color: #0f172a;
+            padding: 4px 12px;
+            border-radius: 8px;
+            font-weight: 900;
+            font-size: 1.05rem;
+            border: 2px solid #0f172a;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            letter-spacing: 1px;
+        }
+
+        .plate-chip.blacklist-glow {
+            border-color: #ef4444;
+            box-shadow: 0 0 14px rgba(239, 68, 68, 0.7);
+        }
+
+        /* صورة اللوحة المقصوصة المصغرة */
+        .crop-thumb {
+            width: 76px;
+            height: 38px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .crop-thumb:hover {
+            transform: scale(1.6);
+            z-index: 10;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+
+        /* شارات الحالة */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.76rem;
+            font-weight: 700;
+        }
+
+        .badge-clean {
+            background: rgba(34, 197, 94, 0.15);
+            color: #22c55e;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .badge-danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            animation: pulse-danger 1.5s infinite;
+        }
+
+        @keyframes pulse-danger {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        /* المودال المنبثق لإضافة سيارة للقائمة السوداء */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .modal-card {
+            background: #0f172a;
+            border: 1px solid var(--accent-red);
+            border-radius: 20px;
+            padding: 28px;
+            width: 90%;
+            max-width: 480px;
+            box-shadow: 0 15px 40px rgba(239, 68, 68, 0.25);
+        }
+
+        .modal-card h3 {
+            font-size: 1.2rem;
+            margin-bottom: 16px;
+            color: #f8fafc;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid var(--border-glass);
+            padding: 10px 14px;
+            border-radius: 10px;
+            color: white;
+            font-size: 0.9rem;
+            outline: none;
+        }
+
+        .form-group input:focus {
+            border-color: var(--accent-red);
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 22px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- الشريط العلوي -->
+    <header class="navbar">
+        <div class="brand-area">
+            <div class="brand-logo">🚗</div>
+            <div>
+                <div class="brand-title">لوحة تحكم كاشف اللوحات الذكي</div>
+                <div class="brand-subtitle">نظام المراقبة والتحقق الأمني اللحظي للمرور المصري</div>
+            </div>
+        </div>
+        <div class="nav-actions">
+            <a href="/review" class="btn-live-scanner" style="background: linear-gradient(135deg, #10b981, #059669);" target="_blank">
+                <span>مراجعة الداتا سيت 🎯</span>
+            </a>
+            <a href="/scanner" class="btn-live-scanner" target="_blank">
+                <span>فتح الكاميرا الحية 📷</span>
+            </a>
+        </div>
+    </header>
+
+    <main class="main-container">
+        <!-- كروت الإحصائيات الحية -->
+        <section class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h4>مركبات تم رصدها اليوم</h4>
+                    <div class="stat-num" id="statTodayCount">0</div>
+                </div>
+                <div class="stat-icon icon-blue">🚗</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h4>تنبيهات أمنية (قائمة سوداء)</h4>
+                    <div class="stat-num" style="color: #ef4444;" id="statAlertsCount">0</div>
+                </div>
+                <div class="stat-icon icon-red">🚨</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h4>إجمالي السجلات بقاعدة البيانات</h4>
+                    <div class="stat-num" id="statTotalCount">0</div>
+                </div>
+                <div class="stat-icon icon-green">📊</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h4>سيارات مدرجة بالقائمة السوداء</h4>
+                    <div class="stat-num" style="color: #f59e0b;" id="statBlacklistCount">0</div>
+                </div>
+                <div class="stat-icon icon-amber">⚠️</div>
+            </div>
+        </section>
+
+        <!-- التبويبات -->
+        <div class="tabs-nav">
+            <button class="tab-btn active" id="tabLogsBtn" onclick="switchTab('logs')">📋 سجل مرور المركبات الحي</button>
+            <button class="tab-btn" id="tabBlacklistBtn" onclick="switchTab('blacklist')">🚨 إدارة القائمة السوداء</button>
+        </div>
+
+        <!-- تبويب 1: سجل المركبات -->
+        <section id="logsSection">
+            <div class="table-controls">
+                <div class="search-box">
+                    <input type="text" id="searchInput" placeholder="ابحث برقم اللوحة، الحروف، أو المحافظة..." oninput="handleSearch()">
+                </div>
+                <div class="actions-bar">
+                    <button class="btn-action" onclick="fetchLogs()">🔄 تحديث فوري</button>
+                    <button class="btn-action" onclick="exportCSV()">📥 تصدير Excel / CSV</button>
+                </div>
+            </div>
+
+            <div class="glass-table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>المعاينة</th>
+                            <th>رقم اللوحة</th>
+                            <th>المحافظة</th>
+                            <th>نسبة التأكد</th>
+                            <th>الحالة الأمنية</th>
+                            <th>وقت الرصد</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logsTableBody">
+                        <tr>
+                            <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                                جاري تحميل سجلات المرور...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- تبويب 2: إدارة القائمة السوداء -->
+        <section id="blacklistSection" style="display: none;">
+            <div class="table-controls">
+                <h3 style="font-size: 1.1rem; color: #f8fafc;">قائمة المركبات المطلوبة أمنياً والمحظورة</h3>
+                <div class="actions-bar">
+                    <button class="btn-action btn-primary" onclick="openAddBlacklistModal()">➕ إضافة سيارة للقائمة السوداء</button>
+                </div>
+            </div>
+
+            <div class="glass-table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>اللوحة المطلوبة</th>
+                            <th>سبب الإدراج الأمني</th>
+                            <th>درجة الخطورة</th>
+                            <th>تاريخ الإدراج</th>
+                            <th>الإجراءات</th>
+                        </tr>
+                    </thead>
+                    <tbody id="blacklistTableBody">
+                        <!-- تُملأ بالجافاسكريبت -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- نافذة إضافة سيارة للقائمة السوداء -->
+    <div class="modal-overlay" id="addModal">
+        <div class="modal-card">
+            <h3>🚨 إضافة سيارة للقائمة السوداء</h3>
+            <div class="form-group">
+                <label>أرقام اللوحة (مثال: 8429 أو ٨٤٢٩)</label>
+                <input type="text" id="blDigits" placeholder="مثال: 8429">
+            </div>
+            <div class="form-group">
+                <label>حروف اللوحة بمسافات (مثال: س ب)</label>
+                <input type="text" id="blLetters" placeholder="مثال: س ب">
+            </div>
+            <div class="form-group">
+                <label>سبب الإدراج الأمني</label>
+                <input type="text" id="blReason" placeholder="مثال: سيارة مسروقة - بلاغ قسم الهرم">
+            </div>
+            <div class="form-group">
+                <label>مستوى التنبيه</label>
+                <select id="blSeverity">
+                    <option value="danger">خطر أحمر (سارينة عالية + وميض خطر)</option>
+                    <option value="warning">تحذير أصفر (إشعار متابعة)</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-action" onclick="closeAddBlacklistModal()">إلغاء</button>
+                <button class="btn-action btn-primary" onclick="submitBlacklist()">تأكيد الإضافة 🚨</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentTab = 'logs';
+        let searchTimeout = null;
+
+        async function fetchStats() {
+            try {
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+                document.getElementById('statTodayCount').innerText = data.today_count || 0;
+                document.getElementById('statAlertsCount').innerText = data.today_alerts || 0;
+                document.getElementById('statTotalCount').innerText = data.total_count || 0;
+                document.getElementById('statBlacklistCount').innerText = data.total_blacklist || 0;
+            } catch (e) {
+                console.error("خطأ في جلب الإحصائيات:", e);
+            }
+        }
+
+        async function fetchLogs(query = '') {
+            try {
+                const res = await fetch(`/api/logs?q=${encodeURIComponent(query)}&limit=40`);
+                const data = await res.json();
+                renderLogs(data.logs || []);
+            } catch (e) {
+                console.error("خطأ في جلب السجلات:", e);
+            }
+        }
+
+        function renderLogs(logs) {
+            const tbody = document.getElementById('logsTableBody');
+            if (!logs || logs.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #94a3b8; padding: 30px;">لم يتم العثور على أي مركبات مسجلة بعد.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = logs.map(log => {
+                const isBL = log.is_blacklist;
+                const statusBadge = isBL 
+                    ? `<span class="badge badge-danger">🚨 قائمة سوداء: ${log.blacklist_reason}</span>`
+                    : `<span class="badge badge-clean">🟢 مصرح قانونياً</span>`;
+                
+                const thumbHtml = log.crop_path 
+                    ? `<img src="${log.crop_path}" class="crop-thumb" alt="Plate" onclick="window.open('${log.crop_path}', '_blank')">`
+                    : `<span style="color:#64748b; font-size:0.75rem;">بدون صورة</span>`;
+
+                return `
+                    <tr>
+                        <td>${thumbHtml}</td>
+                        <td>
+                            <div class="plate-chip ${isBL ? 'blacklist-glow' : ''}">
+                                ${log.plate_text}
+                            </div>
+                        </td>
+                        <td><span style="font-weight:600;">${log.governorate}</span></td>
+                        <td>
+                            <div style="font-family:'Outfit'; font-weight:700; color: #38bdf8;">
+                                ${(log.confidence * 100).toFixed(0)}%
+                            </div>
+                        </td>
+                        <td>${statusBadge}</td>
+                        <td style="font-family:'Outfit'; color:#94a3b8; font-size:0.85rem;">
+                            ${log.timestamp}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        async function fetchBlacklist() {
+            try {
+                const res = await fetch('/api/blacklist');
+                const data = await res.json();
+                renderBlacklist(data.items || []);
+            } catch (e) {
+                console.error("خطأ في جلب القائمة السوداء:", e);
+            }
+        }
+
+        function renderBlacklist(items) {
+            const tbody = document.getElementById('blacklistTableBody');
+            if (!items || items.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 25px;">لا توجد أي سيارات بالقائمة السوداء حالياً.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = items.map(item => `
+                <tr>
+                    <td>
+                        <div class="plate-chip blacklist-glow">${item.plate_display}</div>
+                    </td>
+                    <td style="color:#f8fafc; font-weight:600;">${item.reason}</td>
+                    <td>
+                        <span class="badge ${item.severity === 'danger' ? 'badge-danger' : 'badge-clean'}" style="color:#f59e0b; border-color:#f59e0b;">
+                            ${item.severity.toUpperCase()}
+                        </span>
+                    </td>
+                    <td style="color:#94a3b8; font-family:'Outfit'; font-size:0.85rem;">${item.created_at}</td>
+                    <td>
+                        <button class="btn-action" style="padding:4px 10px; color:#ef4444;" onclick="deleteBlacklist(${item.id})">🗑️ حذف</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.getElementById('tabLogsBtn').classList.toggle('active', tab === 'logs');
+            document.getElementById('tabBlacklistBtn').classList.toggle('active', tab === 'blacklist');
+            document.getElementById('logsSection').style.display = (tab === 'logs') ? 'block' : 'none';
+            document.getElementById('blacklistSection').style.display = (tab === 'blacklist') ? 'block' : 'none';
+
+            if (tab === 'logs') fetchLogs();
+            if (tab === 'blacklist') fetchBlacklist();
+        }
+
+        function handleSearch() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                const q = document.getElementById('searchInput').value;
+                fetchLogs(q);
+            }, 300);
+        }
+
+        function openAddBlacklistModal() {
+            document.getElementById('addModal').classList.add('active');
+        }
+
+        function closeAddBlacklistModal() {
+            document.getElementById('addModal').classList.remove('active');
+        }
+
+        async function submitBlacklist() {
+            const digits = document.getElementById('blDigits').value.trim().split('');
+            const letters = document.getElementById('blLetters').value.trim().split(/\s+/);
+            const reason = document.getElementById('blReason').value.trim();
+            const severity = document.getElementById('blSeverity').value;
+
+            if (digits.length === 0 || letters.length === 0 || !reason) {
+                alert("يرجى ملء جميع الحقول بالأرقام والحروف والسبب.");
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/blacklist', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ digits, letters, reason, severity })
+                });
+                const d = await res.json();
+                if (d.success) {
+                    closeAddBlacklistModal();
+                    fetchBlacklist();
+                    fetchStats();
+                } else {
+                    alert("تعذر إضافة اللوحة، تأكد من صحة البيانات.");
+                }
+            } catch (e) {
+                alert("حدث خطأ في الإضافة: " + e);
+            }
+        }
+
+        async function deleteBlacklist(id) {
+            if (!confirm("هل أنت متأكد من حذف هذه اللوحة من القائمة السوداء؟")) return;
+            try {
+                const res = await fetch(`/api/blacklist/${id}`, { method: 'DELETE' });
+                const d = await res.json();
+                if (d.success) {
+                    fetchBlacklist();
+                    fetchStats();
+                }
+            } catch (e) {
+                alert("حدث خطأ في الحذف: " + e);
+            }
+        }
+
+        function exportCSV() {
+            window.location.href = '/api/export/csv';
+        }
+
+        // تحديث دوري تلقائي كل 4 ثوانٍ
+        setInterval(() => {
+            fetchStats();
+            if (currentTab === 'logs' && !document.getElementById('searchInput').value) {
+                fetchLogs();
+            }
+        }, 3500);
+
+        // تحميل أولي
+        fetchStats();
+        fetchLogs();
+    </script>
+</body>
+</html>
