@@ -9,5 +9,5 @@ echo.
 echo       https://192.168.1.6:8000/scanner
 echo.
 echo ===================================================================
-"C:\Program Files\Python311\python.exe" -m uvicorn backend.app:app --host 0.0.0.0 --port 8000 --ssl-certfile cert.pem --ssl-keyfile key.pem
+"E:\car_palate_venv\Scripts\python.exe" -m uvicorn backend.app:app --host 0.0.0.0 --port 8000 --ssl-certfile cert.pem --ssl-keyfile key.pem
 pause

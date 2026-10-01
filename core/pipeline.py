@@ -42,13 +42,25 @@ class EgyptianALPR:
     def __init__(self, 
                  plate_model_path: str = PLATE_MODEL_PATH,
                  loc_model_path: str = LOC_MODEL_PATH,
-                 recog_model_path: str = RECOG_MODEL_PATH):
+                 recog_model_path: str = RECOG_MODEL_PATH,
+                 device: str = None):
         
-        print(f"🧠 جاري تحميل النماذج الذكية الثلاثة (مصنف الرموز: {os.path.basename(recog_model_path)})...")
+        import torch
+        if device is None:
+            self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        else:
+            self.device = device
+            
+        dev_desc = f"{self.device.upper()} ({torch.cuda.get_device_name(0)})" if ('cuda' in self.device and torch.cuda.is_available()) else "CPU"
+        print(f"🧠 جاري تحميل النماذج الذكية الثلاثة على [{dev_desc}] (مصنف الرموز: {os.path.basename(recog_model_path)})...")
         self.plate_model = YOLO(plate_model_path)
         self.loc_model   = YOLO(loc_model_path)
         self.recog_model = YOLO(recog_model_path)
-        print("✅ تم تحميل كافة النماذج بنجاح.")
+        
+        self.plate_model.to(self.device)
+        self.loc_model.to(self.device)
+        self.recog_model.to(self.device)
+        print(f"✅ تم تفعيل تسريع كرت الشاشة [{dev_desc}] وتحميل كافة النماذج بنجاح.")
 
     def recognize_plate_crop(self, crop: np.ndarray, direct_mode: bool = True) -> dict:
         """
@@ -70,7 +82,7 @@ class EgyptianALPR:
 
         if direct_mode:
             # 2. الكشف المباشر فائق الدقة باستخدام الموديل 3 مباشرة (End-to-End Direct Detection)
-            c_res = self.recog_model(pass1, conf=0.25, verbose=False)[0]
+            c_res = self.recog_model(pass1, conf=0.25, device=self.device, verbose=False)[0]
             raw_dets = []
             for cb in c_res.boxes:
                 cname = self.recog_model.names[int(cb.cls[0])]
@@ -164,7 +176,7 @@ class EgyptianALPR:
         scale2 = pass2.shape[1] / w_tot
 
         # 2. الموديل الثاني: كشف مواضع الخانات المادية مع إلغاء التكرار
-        l_res = self.loc_model(pass1, conf=LOC_CONF, verbose=False)[0]
+        l_res = self.loc_model(pass1, conf=LOC_CONF, device=self.device, verbose=False)[0]
         raw_b = []
         for bx in l_res.boxes:
             coords = list(map(int, bx.xyxy[0][:4]))
@@ -191,8 +203,8 @@ class EgyptianALPR:
             }
 
         # 3. الموديل الثالث: كشف متعدد المقاييس مع تطبيق الأوزان القبلية
-        c1 = self.recog_model(pass1, conf=RECOG_CONF, verbose=False)[0]
-        c2 = self.recog_model(pass2, conf=RECOG_CONF, verbose=False)[0]
+        c1 = self.recog_model(pass1, conf=RECOG_CONF, device=self.device, verbose=False)[0]
+        c2 = self.recog_model(pass2, conf=RECOG_CONF, device=self.device, verbose=False)[0]
 
         candidates = []
         for cb in c1.boxes:
@@ -333,7 +345,7 @@ class EgyptianALPR:
         المعالجة الكاملة للصورة (أو إطار الفيديو): كشف مكان اللوحة، قراءة المحارف، وإضافة الـ HUD الزووم
         """
         img_h, img_w = image.shape[:2]
-        p_res = self.plate_model(image, conf=PLATE_CONF, verbose=False)[0]
+        p_res = self.plate_model(image, conf=PLATE_CONF, device=self.device, verbose=False)[0]
 
         annotated_frame = image.copy()
         plates_output = []

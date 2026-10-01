@@ -21,6 +21,14 @@ test_tahoma.png
 *_backup.pt
 .tempmediaStorage/
 .system_generated/
+*.MOV
+*.mov
+*.mp4
+frame_sample_*.jpg
+side_by_side_comparison.jpg
+benchmark_result_*.txt
+*.ps1
+download_torch.bat
 
 # Environment & IDE
 .env
