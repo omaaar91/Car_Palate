@@ -14,6 +14,8 @@ from core.config import (
 from core.deskew import deskew_adaptive
 from core.verification import (
     validate_egyptian_syntax, 
+    suppress_duplicate_slots,
+    suppress_duplicate_detections,
     prune_spurious_boxes, 
     resolve_split_index, 
     verify_digit_geometry, 
@@ -48,9 +50,10 @@ class EgyptianALPR:
         self.recog_model = YOLO(recog_model_path)
         print("✅ تم تحميل كافة النماذج بنجاح.")
 
-    def recognize_plate_crop(self, crop: np.ndarray) -> dict:
+    def recognize_plate_crop(self, crop: np.ndarray, direct_mode: bool = True) -> dict:
         """
         معالجة اللوحة المقصوصة واستخراج الحروف والأرقام ورسم الصناديق التوضيحية
+        direct_mode: استخدام الموديل 3 مباشرة دون الاعتماد على الموديل 2 لمنع الأخطاء والصناديق الوهمية
         """
         crop_rot, angle = deskew_adaptive(crop)
         h, w = crop_rot.shape[:2]
@@ -64,15 +67,115 @@ class EgyptianALPR:
         # 1. الدقة الفائقة بهندسة Lanczos4
         pass1 = cv2.resize(crop_rot, (int(w * SCALE_FACTOR), int(h * SCALE_FACTOR)), interpolation=cv2.INTER_LANCZOS4)
         w_tot = pass1.shape[1]
+
+        if direct_mode:
+            # 2. الكشف المباشر فائق الدقة باستخدام الموديل 3 مباشرة (End-to-End Direct Detection)
+            c_res = self.recog_model(pass1, conf=0.25, verbose=False)[0]
+            raw_dets = []
+            for cb in c_res.boxes:
+                cname = self.recog_model.names[int(cb.cls[0])]
+                conf = float(cb.conf[0])
+                coords = list(map(int, cb.xyxy[0][:4]))
+                if coords[0] < (w_tot * 0.03) or coords[2] > (w_tot * 0.985):
+                    continue
+                raw_dets.append({
+                    "name": cname,
+                    "conf": conf,
+                    "box": coords,
+                    "is_digit": cname in DIGITS_SET
+                })
+
+            filtered_dets = suppress_duplicate_detections(raw_dets, iou_thresh=0.30)
+            if len(filtered_dets) > 7:
+                filtered_dets = sorted(sorted(filtered_dets, key=lambda d: d["conf"], reverse=True)[:7], key=lambda d: d["box"][0])
+
+            annotated = pass1.copy()
+            nums, lets = [], []
+            char_details = []
+            box_labels = []
+
+            for d in filtered_dets:
+                lx1, ly1, lx2, ly2 = d["box"]
+                cname = d["name"]
+                score = d["conf"]
+                patch = pass1[ly1:ly2, lx1:lx2]
+                is_digit = d["is_digit"]
+
+                if is_digit:
+                    verified = verify_digit_geometry(patch, cname, score, [(score, cname)])
+                    ar_char = CHAR_MAP.get(verified, '?')
+                    nums.append(ar_char)
+                    label_text = verified
+                else:
+                    verified = verify_letter_geometry(patch, cname, [x["name"] for x in filtered_dets if not x["is_digit"]], [(score, cname)], [])
+                    ar_char = CHAR_MAP.get(verified, '?')
+                    lets.append(ar_char)
+                    label_text = verified
+
+                color = (0, 220, 0) if is_digit else (255, 120, 0)
+                cv2.rectangle(annotated, (lx1, ly1), (lx2, ly2), color, 2)
+                box_labels.append(((lx1, ly1, lx2, ly2), ar_char, is_digit, label_text))
+
+                char_details.append({
+                    "box": [lx1, ly1, lx2, ly2],
+                    "class_name": label_text,
+                    "arabic": ar_char,
+                    "is_digit": is_digit
+                })
+
+            if box_labels:
+                try:
+                    annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+                    pil_img = Image.fromarray(annotated_rgb)
+                    draw = ImageDraw.Draw(pil_img)
+                    font_char = ImageFont.truetype(FONT_PATH, 20)
+                    for (lx1, ly1, lx2, ly2), ar_char, is_digit, _ in box_labels:
+                        color = (0, 255, 100) if is_digit else (255, 160, 0)
+                        reshaped = render_arabic_text(ar_char)
+                        draw.rectangle([lx1, max(0, ly1 - 26), lx1 + 26, ly1], fill=(0, 0, 0, 220))
+                        draw.text((lx1 + 4, max(0, ly1 - 26)), reshaped, font=font_char, fill=color)
+                    annotated = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+                except Exception:
+                    for (lx1, ly1, lx2, ly2), _, is_digit, label_text in box_labels:
+                        color = (0, 220, 0) if is_digit else (255, 120, 0)
+                        cv2.putText(annotated, str(label_text or '?'), (lx1 + 2, max(24, ly1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
+
+            num_txt = " ".join(nums) if nums else "-"
+            rev_lets = list(reversed(lets))
+            let_txt = " ".join(rev_lets) if rev_lets else "-"
+            full_text = f"[{num_txt}] | [{let_txt}]"
+            syntax_info = validate_egyptian_syntax(nums, rev_lets)
+
+            return {
+                "text": full_text,
+                "digits": nums,
+                "letters": rev_lets,
+                "char_details": char_details,
+                "annotated": annotated,
+                "angle": angle,
+                "syntax_valid": syntax_info["is_valid"],
+                "governorate": syntax_info["governorate"],
+                "format_code": syntax_info["format_code"],
+                "badge": syntax_info["badge"]
+            }
+
+        # في حال تم تمرير direct_mode = False: استخدام خط المعالجة القديم مع الموديل الثاني
         pass2 = cv2.resize(crop_rot, (int(w * (SCALE_FACTOR * 1.2)), int(h * (SCALE_FACTOR * 1.2))), interpolation=cv2.INTER_LANCZOS4)
         scale2 = pass2.shape[1] / w_tot
 
-        # 2. الموديل الثاني: كشف مواضع الخانات المادية
+        # 2. الموديل الثاني: كشف مواضع الخانات المادية مع إلغاء التكرار
         l_res = self.loc_model(pass1, conf=LOC_CONF, verbose=False)[0]
-        raw_b = sorted([list(map(int, bx.xyxy[0][:4])) for bx in l_res.boxes], key=lambda x: x[0])
+        raw_b = []
+        for bx in l_res.boxes:
+            coords = list(map(int, bx.xyxy[0][:4]))
+            coords.append(float(bx.conf[0]))
+            raw_b.append(coords)
+
+        # دمج وإلغاء الصناديق المتداخلة لنفس الخانة
+        suppressed_b = suppress_duplicate_slots(raw_b, iou_thresh=0.35)
 
         clean_b = []
-        for bx in raw_b:
+        for bx in suppressed_b:
             bw = bx[2] - bx[0]
             bh = bx[3] - bx[1]
             if bx[0] < (w_tot * 0.04) and bx[0] <= 8: continue
@@ -97,6 +200,25 @@ class EgyptianALPR:
         for cb in c2.boxes:
             coords = [float(cb.xyxy[0][0])/scale2, float(cb.xyxy[0][1])/scale2, float(cb.xyxy[0][2])/scale2, float(cb.xyxy[0][3])/scale2]
             candidates.append((coords, self.recog_model.names[int(cb.cls[0])], float(cb.conf[0]) * 0.95))
+
+        # استرجاع أي خانة واضحة ومؤكدة سقطت من الموديل 2 ورصدها الموديل 3 بثقة عالية
+        for (cx1, cy1, cx2, cy2), cname, raw_c in candidates:
+            if raw_c > 0.40 and len(clean_b) < 7:
+                cw = cx2 - cx1
+                ccx = (cx1 + cx2) / 2.0
+                has_overlap = False
+                for bx in clean_b:
+                    inter = max(0, min(bx[2], cx2) - max(bx[0], cx1))
+                    union = max(bx[2], cx2) - min(bx[0], cx1)
+                    iou = inter / union if union > 0 else 0
+                    bcx = (bx[0] + bx[2]) / 2.0
+                    bw = bx[2] - bx[0]
+                    if iou > 0.15 or abs(bcx - ccx) < min(bw, cw) * 0.55:
+                        has_overlap = True
+                        break
+                if not has_overlap and cx1 > (w_tot * 0.03) and cx2 < (w_tot * 0.98):
+                    clean_b.append([int(cx1), int(cy1), int(cx2), int(cy2)])
+        clean_b.sort(key=lambda b: b[0])
 
         # تنقية الصناديق الزائفة كالمسامير والانعكاسات
         clean_b = prune_spurious_boxes(clean_b, candidates, pass1.shape[1], pass1.shape[0])
@@ -222,7 +344,10 @@ class EgyptianALPR:
             bw, bh = x2 - x1, y2 - y1
             if bw < 42 or bh < 14:
                 continue
-            crop = image[y1:y2, x1:x2]
+            # تطبيق تمديد تكيفي للهوامش لمنع اقتصاص الحروف الطرفية
+            pad_x = int(bw * 0.04)
+            pad_y = int(bh * 0.05)
+            crop = image[max(0, y1 - pad_y):min(img_h, y2 + pad_y), max(0, x1 - pad_x):min(img_w, x2 + pad_x)]
 
             # معالجة تفاصيل اللوحة
             recog_res = self.recognize_plate_crop(crop)

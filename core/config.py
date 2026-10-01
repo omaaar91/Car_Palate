@@ -6,7 +6,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Model paths
 PLATE_MODEL_PATH = os.path.join(BASE_DIR, "best.pt")
 LOC_MODEL_PATH   = os.path.join(BASE_DIR, "best_char.pt")
-RECOG_MODEL_PATH = os.path.join(BASE_DIR, "best_char_afterTuning.pt")
+RECOG_MODEL_PATH = os.path.join(BASE_DIR, "best_tuning_v2.pt")
 
 # Character Mapping (Model English label -> Arabic character)
 CHAR_MAP = {

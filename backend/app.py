@@ -229,10 +229,31 @@ class ReviewConfirmRequest(BaseModel):
 
 @app.post("/api/review/confirm")
 def review_confirm(req: ReviewConfirmRequest):
+    import json
     base_name = os.path.splitext(req.filename)[0]
     cand_img = os.path.join(AUTO_LABELED_DIR, "candidates", f"{base_name}.jpg")
     cand_txt = os.path.join(AUTO_LABELED_DIR, "candidates", f"{base_name}.txt")
     ver_dir = os.path.join(AUTO_LABELED_DIR, "verified")
+
+    # تحديث حالة المراجعة والدقة في ملف البيانات
+    meta_path = os.path.join(AUTO_LABELED_DIR, "review_data.json")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                items = json.load(f)
+            for it in items:
+                if it["filename"] == req.filename:
+                    it["reviewed"] = True
+                    if req.action == "confirm":
+                        it["accuracy_status"] = "modified" if it.get("is_modified") else "correct"
+                        it["folder"] = "verified"
+                    else:
+                        it["accuracy_status"] = "discarded"
+                    break
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(items, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print("Error updating review_data.json on confirm:", e)
 
     if req.action == "confirm" and os.path.exists(cand_img):
         import shutil
@@ -247,6 +268,37 @@ def review_confirm(req: ReviewConfirmRequest):
             if os.path.exists(f_txt): os.remove(f_txt)
 
     return {"success": True}
+
+@app.get("/api/review/stats")
+def get_review_stats():
+    import json
+    meta_path = os.path.join(AUTO_LABELED_DIR, "review_data.json")
+    if not os.path.exists(meta_path):
+        return {
+            "total": 0, "reviewed": 0, "pending": 0,
+            "exact_matches": 0, "modified": 0, "discarded": 0,
+            "accuracy_pct": 0.0
+        }
+    with open(meta_path, "r", encoding="utf-8") as f:
+        items = json.load(f)
+
+    reviewed = [it for it in items if it.get("reviewed")]
+    exact = [it for it in reviewed if it.get("accuracy_status") == "correct"]
+    modified = [it for it in reviewed if it.get("accuracy_status") == "modified"]
+    discarded = [it for it in reviewed if it.get("accuracy_status") == "discarded"]
+
+    valid_reviewed = len(exact) + len(modified)
+    acc = round((len(exact) / valid_reviewed) * 100, 1) if valid_reviewed > 0 else 0.0
+
+    return {
+        "total": len(items),
+        "reviewed": len(reviewed),
+        "pending": len(items) - len(reviewed),
+        "exact_matches": len(exact),
+        "modified": len(modified),
+        "discarded": len(discarded),
+        "accuracy_pct": acc
+    }
 
 class UpdateCharRequest(BaseModel):
     filename: str
@@ -309,6 +361,8 @@ def review_update_char(req: UpdateCharRequest):
     target_item["syntax_valid"] = syntax_info["is_valid"]
     target_item["governorate"] = syntax_info["governorate"]
     target_item["badge"] = syntax_info["badge"]
+    target_item["is_modified"] = True
+    target_item["accuracy_status"] = "modified"
 
     # إعادة كتابة ملف الـ YOLO .txt على القرص فوراً
     target_folder = target_item.get("folder", "verified")
@@ -339,6 +393,186 @@ def review_update_char(req: UpdateCharRequest):
         "success": True, 
         "updated_item": target_item,
         "new_class_id": class_id,
+        "saved_txt": txt_path
+    }
+
+class DeleteCharRequest(BaseModel):
+    filename: str
+    char_index: int
+
+@app.post("/api/review/delete_char")
+def review_delete_char(req: DeleteCharRequest):
+    import json
+    base_name = os.path.splitext(req.filename)[0]
+    meta_path = os.path.join(AUTO_LABELED_DIR, "review_data.json")
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=404, detail="Review data not found")
+
+    with open(meta_path, "r", encoding="utf-8") as f:
+        items = json.load(f)
+
+    target_item = None
+    for item in items:
+        if item["filename"] == req.filename:
+            target_item = item
+            break
+
+    if not target_item or req.char_index >= len(target_item["chars"]):
+        raise HTTPException(status_code=404, detail="Item or char index not found")
+
+    # حذف الخانة المحددة نهائياً
+    del target_item["chars"][req.char_index]
+    target_item["is_modified"] = True
+    target_item["accuracy_status"] = "modified"
+
+    nums = [c["arabic"] for c in target_item["chars"] if c["is_digit"]]
+    raw_lets = [c["arabic"] for c in target_item["chars"] if not c["is_digit"]]
+    arabic_lets = list(reversed(raw_lets))
+
+    from core.verification import validate_egyptian_syntax
+    syntax_info = validate_egyptian_syntax(nums, arabic_lets)
+    target_item["plate_text"] = f"[{' '.join(nums)}] | [{' '.join(arabic_lets)}]"
+    target_item["syntax_valid"] = syntax_info["is_valid"]
+    target_item["governorate"] = syntax_info["governorate"]
+    target_item["badge"] = syntax_info["badge"]
+
+    # إعادة كتابة ملف الـ YOLO .txt على القرص فوراً
+    target_folder = target_item.get("folder", "candidates")
+    txt_path = os.path.join(AUTO_LABELED_DIR, target_folder, f"{base_name}.txt")
+    img_path = os.path.join(AUTO_LABELED_DIR, target_folder, f"{base_name}.jpg")
+
+    engine = get_alpr_engine()
+    name_to_id = {v: k for k, v in engine.recog_model.names.items()}
+
+    if os.path.exists(img_path):
+        img = cv2.imread(img_path)
+        if img is not None:
+            h, w = img.shape[:2]
+            yolo_lines = []
+            for c in target_item["chars"]:
+                cid = name_to_id.get(c["name"], 0)
+                lx1, ly1, lx2, ly2 = c["box"]
+                cx = ((lx1 + lx2) / 2.0) / w
+                cy = ((ly1 + ly2) / 2.0) / h
+                bw = (lx2 - lx1) / w
+                bh = (ly2 - ly1) / h
+                yolo_lines.append(f"{cid} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+
+            with open(txt_path, "w", encoding="utf-8") as f_txt:
+                f_txt.write("\n".join(yolo_lines) + "\n")
+
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+
+    return {
+        "success": True, 
+        "updated_item": target_item,
+        "saved_txt": txt_path
+    }
+
+class AddCharRequest(BaseModel):
+    filename: str
+    char_name: str
+    is_digit: bool = False
+
+@app.post("/api/review/add_char")
+def review_add_char(req: AddCharRequest):
+    import json
+    base_name = os.path.splitext(req.filename)[0]
+    meta_path = os.path.join(AUTO_LABELED_DIR, "review_data.json")
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=404, detail="Review data not found")
+
+    with open(meta_path, "r", encoding="utf-8") as f:
+        items = json.load(f)
+
+    target_item = None
+    for item in items:
+        if item["filename"] == req.filename:
+            target_item = item
+            break
+
+    if not target_item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    engine = get_alpr_engine()
+    name_to_id = {v: k for k, v in engine.recog_model.names.items()}
+    from core.config import CHAR_MAP
+    ar_to_name = {v: k for k, v in CHAR_MAP.items()}
+    digit_fix = {'٠':'0', '١':'1', '٢':'2', '٣':'3', '٤':'4', '٥':'5', '٦':'6', '٧':'7', '٨':'8', '٩':'9', 'ه':'haa'}
+    
+    raw = req.char_name.strip()
+    if raw in digit_fix:
+        raw = digit_fix[raw]
+    model_name = ar_to_name.get(raw, raw)
+    arabic_display = CHAR_MAP.get(model_name, raw)
+    is_digit = model_name in [str(i) for i in range(10)]
+
+    chars = target_item["chars"]
+    if chars:
+        avg_w = float(np.mean([c["box"][2] - c["box"][0] for c in chars]))
+        avg_h = float(np.mean([c["box"][3] - c["box"][1] for c in chars]))
+        avg_y1 = float(np.mean([c["box"][1] for c in chars]))
+        avg_y2 = float(np.mean([c["box"][3] for c in chars]))
+        if is_digit:
+            min_x = min(c["box"][0] for c in chars)
+            new_box = [max(0, int(min_x - avg_w)), int(avg_y1), int(min_x), int(avg_y2)]
+        else:
+            max_x = max(c["box"][2] for c in chars)
+            new_box = [int(max_x), int(avg_y1), int(max_x + avg_w), int(avg_y2)]
+    else:
+        new_box = [50, 50, 100, 150]
+
+    chars.append({
+        "name": model_name,
+        "arabic": arabic_display,
+        "is_digit": is_digit,
+        "box": new_box
+    })
+    chars.sort(key=lambda c: c["box"][0])
+
+    target_item["is_modified"] = True
+    target_item["accuracy_status"] = "modified"
+
+    nums = [c["arabic"] for c in target_item["chars"] if c["is_digit"]]
+    raw_lets = [c["arabic"] for c in target_item["chars"] if not c["is_digit"]]
+    arabic_lets = list(reversed(raw_lets))
+
+    from core.verification import validate_egyptian_syntax
+    syntax_info = validate_egyptian_syntax(nums, arabic_lets)
+    target_item["plate_text"] = f"[{' '.join(nums)}] | [{' '.join(arabic_lets)}]"
+    target_item["syntax_valid"] = syntax_info["is_valid"]
+    target_item["governorate"] = syntax_info["governorate"]
+    target_item["badge"] = syntax_info["badge"]
+
+    # كتابة ملف YOLO .txt
+    target_folder = target_item.get("folder", "candidates")
+    txt_path = os.path.join(AUTO_LABELED_DIR, target_folder, f"{base_name}.txt")
+    img_path = os.path.join(AUTO_LABELED_DIR, target_folder, f"{base_name}.jpg")
+
+    if os.path.exists(img_path):
+        img = cv2.imread(img_path)
+        if img is not None:
+            h, w = img.shape[:2]
+            yolo_lines = []
+            for c in target_item["chars"]:
+                cid = name_to_id.get(c["name"], 0)
+                lx1, ly1, lx2, ly2 = c["box"]
+                cx = ((lx1 + lx2) / 2.0) / w
+                cy = ((ly1 + ly2) / 2.0) / h
+                bw = (lx2 - lx1) / w
+                bh = (ly2 - ly1) / h
+                yolo_lines.append(f"{cid} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+
+            with open(txt_path, "w", encoding="utf-8") as f_txt:
+                f_txt.write("\n".join(yolo_lines) + "\n")
+
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+
+    return {
+        "success": True,
+        "updated_item": target_item,
         "saved_txt": txt_path
     }
 

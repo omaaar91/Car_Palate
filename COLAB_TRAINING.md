@@ -1,102 +1,156 @@
-# 🚀 دليل وكود التدريب على Google Colab (Egyptian Plate ALPR Fine-Tuning)
+# 🚀 دليل وكود التدريب على Google Colab (Egyptian ALPR Phase 3 - Real Plates Fine-Tuning)
 
-## الملفات المطلوب رفعها إلى كولاب:
-1. `egyptian_chars_verified_dataset_1790779507.zip`
-2. `Tuning_char.pt`
+## 📁 الملفات المطلوب رفعها إلى Google Colab:
+ارفع هذين الملفين فقط إلى لوحة الملفات (Files 📁) على يسار شاشة Colab:
+1. **ملف الداتا سيت المضغوط** الذي قمت بتحميله للتو:  
+   `egyptian_chars_verified_dataset_*.zip` (يحتوي على الـ 748 لوحة المعتمدة بشرياً).  
+   *(ملاحظة: انتظر حتى تكتمل دائرة الرفع الدائرية وتختفي بجانب اسم الملف).*
+2. **ملف الموديل الحالي** من مجلد المشروع في جهازك:  
+   `best_char_afterTuning.pt` (الموجود في مجلد المشروع الرئيسي: `e:\tik tok\Car_Palate\best_char_afterTuning.pt`).
 
 ---
 
-## 💻 الكود الكامل المنسوخ إلى Colab:
+## 💻 الكود الكامل والمعدل: انسخه وضعه في خلية واحدة (Cell) في Colab واضغط تشغيل:
 
 ```python
 # =====================================================================
-# 1. التأكد من تفعيل كارت الشاشة GPU وتثبيت Ultralytics
+# 1. التأكد من كارت الشاشة GPU وتثبيت مكتبة Ultralytics
 # =====================================================================
 import torch
 print("GPU Available:", torch.cuda.is_available())
 if torch.cuda.is_available():
     print("Device Name:", torch.cuda.get_device_name(0))
 else:
-    print("⚠️ تنبيه: يرجى تفعيل كارت الشاشة من القائمة: Runtime -> Change runtime type -> T4 GPU")
+    print("⚠️ تنبيه: يرجى تفعيل كارت الشاشة أولاً من القائمة العلوية:")
+    print("Runtime -> Change runtime type -> T4 GPU")
 
 !pip install -q ultralytics
 
 # =====================================================================
-# 2. فك ضغط الداتا سيت وضبط المسارات
+# 2. فك ضغط الداتا سيت ومعالجة الملفات تلقائياً (بأمان تام)
 # =====================================================================
 import os
 import glob
+import zipfile
 import yaml
 
-zip_files = glob.glob('egyptian_chars_verified_dataset_*.zip')
-if not zip_files:
-    raise FileNotFoundError("لم يتم العثور على ملف الداتا سيت المضغوط! يرجى رفعه إلى لوحة الملفات على اليسار.")
+# البحث التلقائي عن أي ملف zip تم رفعه (حتى لو كان باسم فيه مسافات أو أقواس مثل (1).zip)
+zip_candidates = sorted(glob.glob('*.zip'), key=os.path.getmtime, reverse=True)
+if not zip_candidates:
+    raise FileNotFoundError("❌ لم يتم العثور على أي ملف zip! يرجى سحب ملف الداتا سيت وإفلاته في لوحة الملفات على اليسار.")
 
-zip_target = zip_files[0]
-print(f"📦 جاري فك ضغط الداتا سيت: {zip_target} ...")
-!unzip -q -o "{zip_target}"
+zip_target = zip_candidates[0]
+print(f"📦 جاري فك ضغط: {zip_target} عبر مكتبة zipfile...")
 
-# تصحيح مسار الداتا سيت لبيئة كولاب
-yaml_path = 'dataset/data.yaml'
-with open(yaml_path, 'r', encoding='utf-8') as f:
-    cfg = yaml.safe_load(f)
+with zipfile.ZipFile(zip_target, 'r') as zip_ref:
+    zip_ref.extractall('.')
 
-cfg['path'] = '/content/dataset'
-with open(yaml_path, 'w', encoding='utf-8') as f:
-    yaml.dump(cfg, f, allow_unicode=True)
+print("✅ تم فك الضغط بنجاح!")
 
-print("✅ تم تجهيز الداتا سيت بنجاح وبناء تقسيم Train و Validation!")
+# تحديد مكان مجلد الصور تلقائياً أينما استقر
+images_train_candidates = glob.glob('**/images/train', recursive=True)
+if images_train_candidates:
+    dataset_root = os.path.dirname(os.path.dirname(os.path.abspath(images_train_candidates[0])))
+else:
+    dataset_root = os.path.abspath('dataset')
+
+train_path = os.path.join(dataset_root, 'images', 'train')
+val_path = os.path.join(dataset_root, 'images', 'val')
+
+# قائمة الفئات الـ 38 الرسمية لأحرف وأرقام اللوحات المصرية
+classes_38 = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '7aa', '8', '9', 
+    'Taa', 'Thaa', 'ain', 'alif', 'baa', 'daad', 'daal', 'faa', 'ghayn', 
+    'haa', 'jeem', 'kaaf', 'khaa', 'laam', 'meem', 'noon', 'qaaf', 'raa', 
+    'saad', 'seen', 'sheen', 'taa', 'thaa', 'waw', 'yaa', 'zaal', 'zay'
+]
+
+# إنشاء وضمان ملف data.yaml بمسارات مطلقة صحيحة 100%
+data_yaml_path = os.path.join(dataset_root, 'data.yaml')
+yaml_content = {
+    'path': dataset_root,
+    'train': 'images/train',
+    'val': 'images/val',
+    'nc': len(classes_38),
+    'names': classes_38
+}
+
+with open(data_yaml_path, 'w', encoding='utf-8') as f:
+    yaml.dump(yaml_content, f, allow_unicode=True)
+
+train_imgs = glob.glob(os.path.join(train_path, '*.jpg'))
+val_imgs = glob.glob(os.path.join(val_path, '*.jpg'))
+
+print(f"📄 مسار ملف الإعدادات: {data_yaml_path}")
+print(f"   - صور التدريب (Train): {len(train_imgs)}")
+print(f"   - صور التحقق (Val): {len(val_imgs)}")
+
+if len(train_imgs) == 0:
+    raise RuntimeError("⚠️ لم يتم العثور على صور تدريب! قد يكون الملف قيد الرفع في كولاب، انتظر حتى يكتمل رفعه ثم أعد التشغيل.")
 
 # =====================================================================
-# 3. التدريب والضبط الدقيق (Fine-Tuning) بحماية الحروف العربية
+# 3. تحميل الموديل وانطلاق التدريب والضبط الدقيق (Fine-Tuning)
 # =====================================================================
 from ultralytics import YOLO
 
-if not os.path.exists('Tuning_char.pt'):
-    raise FileNotFoundError("لم يتم العثور على ملف Tuning_char.pt! يرجى رفعه لبدء التدريب منه.")
+# البحث عن ملف الموديل
+weights_candidates = ['best_char_afterTuning.pt', 'Tuning_char.pt', 'best_char.pt']
+model_path = None
+for w in weights_candidates:
+    if os.path.exists(w):
+        model_path = w
+        break
 
-print("🧠 جاري تحميل أحدث أوزان للموديل Tuning_char.pt ...")
-model = YOLO('Tuning_char.pt')
+if not model_path:
+    pts = sorted(glob.glob('*.pt'), key=os.path.getmtime, reverse=True)
+    if pts:
+        model_path = pts[0]
+    else:
+        raise FileNotFoundError("❌ لم يتم العثور على ملف الموديل (.pt)! يرجى رفع best_char_afterTuning.pt إلى Colab.")
 
-print("🚀 انطلاق التدريب (50 Epochs مع Augmentation مخصص لقراءة النصوص واللوحات)...")
+print(f"🧠 جاري تحميل الأوزان من: {model_path} ...")
+model = YOLO(model_path)
+
+print("🚀 انطلاق الضبط الدقيق (40 Epochs لتعلم الحالات الصعبة والمشوشة)...")
 results = model.train(
-    data='dataset/data.yaml',
-    epochs=50,                  # 50 إيبوك تستغرق حوالي 2-3 دقائق على T4 GPU
-    imgsz=320,                  # الأبعاد القياسية للوحات المقصوصة
+    data=data_yaml_path,
+    epochs=40,                  # 40 إيبوك تستغرق حوالي 2.5 دقيقة على T4 GPU
+    imgsz=320,                  # الأبعاد المثالية للوحات المقصوصة
     batch=16,
-    lr0=0.001,                  # معدل تعلم متزن للمحافظة على الأوزان السابقة
+    lr0=0.0008,                 # معدل تعلم متزن يحافظ على الأساسيات ويعالج الحالات الضعيفة
     lrf=0.01,
     
-    # --- إعدادات Augmentation لحماية النصوص والحروف العربية ---
+    # --- إعدادات الحفاظ على اتجاه وهندسة الحروف العربية ---
     fliplr=0.0,                 # 🚫 ممنوع قلب الصور أفقياً (حماية الحروف والأرقام من الانعكاس)
     flipud=0.0,                 # 🚫 ممنوع قلب الصور رأسياً
-    degrees=4.0,                # محاكاة ميل الكاميرا الطبيعي
-    perspective=0.0005,         # محاكاة زوايا التصوير الواقعية
-    hsv_h=0.015,                # تنوع درجات الألوان
+    degrees=3.0,                # محاكاة زوايا التصوير المائلة
+    perspective=0.0004,         # محاكاة منظور الكاميرا الواقعي
+    hsv_h=0.015,                # تنوع ألوان خفيف
     hsv_s=0.5,                  # تنوع تشبع الألوان
-    hsv_v=0.4,                  # محاكاة سطوع الشمس والظلال القوية
-    scale=0.1,                  # محاكاة اختلاف المسافة وقرب/بعد اللوحة
-    mosaic=0.3,                 # دمج ومزج الصور
+    hsv_v=0.4,                  # محاكاة الظلال القوية والشمس الساطعة
+    scale=0.15,                 # محاكاة اختلاف حجم اللوحة
+    mosaic=0.2,                 # دمج الصور لزيادة التركيز
+    close_mosaic=10,            # إيقاف الـ mosaic في آخر 10 إيبوكس لدقة التفاصيل
     
-    name='egyptian_char_tuning_v2',
+    name='egyptian_char_real_tuning_v3',
     device=0,
     save=True,
     plots=True
 )
 
-print("\n" + "=" * 60)
-print("🎉 اكتمل التدريب والضبط الدقيق بنجاح وبأعلى دقة!")
-print("=" * 60 + "\n")
+print("\n" + "=" * 65)
+print("🎉 اكتمل التدريب بنجاح تام وتم تحديث قدرات الموديل على اللوحات الصعبة!")
+print("=" * 65 + "\n")
 
 # =====================================================================
 # 4. تنزيل الموديل الجديد المطور إلى جهازك مباشرة
 # =====================================================================
 from google.colab import files
 
-best_weight = 'runs/detect/egyptian_char_tuning_v2/weights/best.pt'
+best_weight = 'runs/detect/egyptian_char_real_tuning_v3/weights/best.pt'
 if os.path.exists(best_weight):
-    print("📥 جاري بدء تنزيل الموديل المطور (best.pt) إلى جهازك...")
+    print("📥 جاري بدء تنزيل الموديل الجديد المطور (best.pt) إلى جهازك...")
     files.download(best_weight)
 else:
-    print(f"الملف غير موجود في: {best_weight}")
+    print(f"الملف موجود في: {best_weight}")
 ```

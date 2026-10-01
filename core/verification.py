@@ -56,6 +56,69 @@ def validate_egyptian_syntax(digits: list, letters: list) -> dict:
         "all_legal_letters": all_legal,
         "badge": f"مرور {gov} ({d_count} أرقام - {l_count} حروف)" if is_valid else f"لوحة غير قياسية ({d_count} أرقام - {l_count} حروف)"
     }
+def suppress_duplicate_slots(boxes: list, iou_thresh: float = 0.35) -> list:
+    """
+    إزالة الصناديق المتكررة لنفس الخانة (Duplicate Slot Suppression):
+    تمنع تكرار نفس الحرف أو الرقم بسبب تداخل صندوقين لنفس الخانة.
+    إذا توفرت درجة الثقة ترتب تنازلياً للاحتفاظ بالصندوق الأكثر دقة وثقة.
+    """
+    if not boxes:
+        return []
+    
+    # دعم كل من [x1, y1, x2, y2] أو [x1, y1, x2, y2, conf]
+    has_conf = (len(boxes[0]) >= 5)
+    if has_conf:
+        sorted_b = sorted(boxes, key=lambda b: float(b[4]), reverse=True)
+    else:
+        sorted_b = sorted(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)
+
+    keep = []
+    for b in sorted_b:
+        overlap = False
+        bcx = (b[0] + b[2]) / 2.0
+        bw = b[2] - b[0]
+        for k in keep:
+            inter = max(0, min(b[2], k[2]) - max(b[0], k[0]))
+            union = max(b[2], k[2]) - min(b[0], k[0])
+            iou = inter / union if union > 0 else 0
+            kcx = (k[0] + k[2]) / 2.0
+            kw = k[2] - k[0]
+            if iou > iou_thresh or abs(bcx - kcx) < min(bw, kw) * 0.52:
+                overlap = True
+                break
+        if not overlap:
+            keep.append(b)
+
+    keep_sorted = sorted(keep, key=lambda b: b[0])
+    return [[int(b[0]), int(b[1]), int(b[2]), int(b[3])] for b in keep_sorted]
+
+def suppress_duplicate_detections(detections: list, iou_thresh: float = 0.30) -> list:
+    """
+    تنقية الصناديق المتداخلة للمحارف المكتشفة مباشرة (Direct Character NMS):
+    تحتفظ بالمحرف صاحب أعلى ثقة وتمنع الازدواجية على نفس الحرف أو الرقم.
+    """
+    if not detections:
+        return []
+    sorted_d = sorted(detections, key=lambda d: float(d['conf']), reverse=True)
+    keep = []
+    for d in sorted_d:
+        b = d['box']
+        bcx = (b[0] + b[2]) / 2.0
+        bw = b[2] - b[0]
+        overlap = False
+        for k in keep:
+            kb = k['box']
+            inter = max(0, min(b[2], kb[2]) - max(b[0], kb[0]))
+            union = max(b[2], kb[2]) - min(b[0], kb[0])
+            iou = inter / union if union > 0 else 0
+            kcx = (kb[0] + kb[2]) / 2.0
+            kw = kb[2] - kb[0]
+            if iou > iou_thresh or abs(bcx - kcx) < min(bw, kw) * 0.52:
+                overlap = True
+                break
+        if not overlap:
+            keep.append(d)
+    return sorted(keep, key=lambda d: d['box'][0])
 
 def prune_spurious_boxes(clean_b: list, candidates: list, plate_w: int, plate_h: int) -> list:
     """

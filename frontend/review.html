@@ -147,6 +147,60 @@
             gap: 20px;
         }
 
+        /* شريط إحصائيات الدقة الفعلية للموديلات */
+        .accuracy-banner {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 12px;
+            width: 100%;
+            max-width: 850px;
+            margin: 0 auto 16px auto;
+        }
+
+        .acc-stat-box {
+            background: rgba(15, 23, 42, 0.88);
+            border: 1px solid var(--border-glass);
+            border-radius: 14px;
+            padding: 10px 14px;
+            text-align: center;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+            transition: transform 0.2s;
+        }
+
+        .acc-stat-box:hover {
+            transform: translateY(-2px);
+            border-color: rgba(56, 189, 248, 0.5);
+        }
+
+        .acc-title {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            font-weight: 700;
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .acc-value {
+            font-size: 1.25rem;
+            font-weight: 900;
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .acc-value.highlight {
+            color: #38bdf8;
+            text-shadow: 0 0 14px rgba(56, 189, 248, 0.45);
+        }
+
+        .acc-value.text-green {
+            color: #22c55e;
+        }
+
+        .acc-value.text-amber {
+            color: #f59e0b;
+        }
+
         /* كارت المراجعة */
         .review-card {
             background: var(--bg-card);
@@ -328,6 +382,78 @@
             height: 52px;
             background: rgba(255, 255, 255, 0.25);
             margin: 0 6px;
+        }
+
+        .char-delete-btn {
+            position: absolute;
+            top: -7px;
+            right: -7px;
+            width: 22px;
+            height: 22px;
+            background: #ef4444;
+            color: white;
+            border-radius: 50%;
+            border: 1.5px solid #fff;
+            cursor: pointer;
+            font-size: 0.7rem;
+            font-weight: 900;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+            transition: all 0.2s;
+            z-index: 5;
+        }
+
+        .char-delete-btn:hover {
+            transform: scale(1.25);
+            background: #dc2626;
+        }
+
+        .btn-add-char {
+            background: rgba(30, 41, 59, 0.7);
+            border: 1.5px dashed var(--accent-cyan);
+            color: var(--accent-cyan);
+            border-radius: 12px;
+            padding: 10px 14px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .btn-add-char:hover {
+            background: rgba(56, 189, 248, 0.18);
+            border-color: #38bdf8;
+            transform: translateY(-2px);
+        }
+
+        .picker-delete-sec {
+            margin-top: 18px;
+            padding-top: 14px;
+            border-top: 1px solid rgba(255, 255, 255, 0.12);
+            text-align: center;
+        }
+
+        .btn-modal-delete {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid #ef4444;
+            color: #ef4444;
+            padding: 10px 18px;
+            border-radius: 10px;
+            font-size: 0.88rem;
+            font-weight: 800;
+            cursor: pointer;
+            transition: all 0.2s;
+            width: 100%;
+        }
+
+        .btn-modal-delete:hover {
+            background: #ef4444;
+            color: white;
         }
 
         /* أزرار التحكم والاعتماد */
@@ -516,6 +642,30 @@
     </div>
 
     <main class="main-content">
+        <!-- شريط قياس الدقة المباشرة للموديلات -->
+        <div class="accuracy-banner">
+            <div class="acc-stat-box" style="border-color: rgba(56, 189, 248, 0.5);">
+                <span class="acc-title">🎯 دقة الموديلات الفعلية</span>
+                <span class="acc-value highlight" id="accPct">--%</span>
+            </div>
+            <div class="acc-stat-box">
+                <span class="acc-title">✅ تطابق 100% دون تعديل</span>
+                <span class="acc-value text-green" id="accExact">0</span>
+            </div>
+            <div class="acc-stat-box">
+                <span class="acc-title">✏️ تم تصحيحها باليد</span>
+                <span class="acc-value text-amber" id="accModified">0</span>
+            </div>
+            <div class="acc-stat-box">
+                <span class="acc-title">📋 تم مراجعته</span>
+                <span class="acc-value" id="accReviewed">0 / 0</span>
+            </div>
+            <div class="acc-stat-box">
+                <span class="acc-title">⏳ المتبقي</span>
+                <span class="acc-value" id="accPending">0</span>
+            </div>
+        </div>
+
         <div class="review-card" id="cardArea">
             <div class="counter-badge" id="counterText">0 / 0</div>
             <div class="status-pill pill-verified" id="statusPill">🟢 متطابقة مع المرور</div>
@@ -581,6 +731,10 @@
                 <div class="picker-sec-label">الحروف المصرية المعتمدة قانوناً (17 حرف):</div>
                 <div class="picker-grid" id="lettersPicker"></div>
             </div>
+
+            <div class="picker-delete-sec" id="pickerDeleteSec">
+                <button class="btn-modal-delete" onclick="deleteSelectedChar()">🗑️ حذف هذه الخانة نهائياً (صندوق وهمي على خدش أو مسمار)</button>
+            </div>
         </div>
     </div>
 
@@ -611,12 +765,30 @@
                 reviewItems = await res.json();
                 if (reviewItems.length > 0) {
                     renderItem(0);
+                    updateAccuracyHUD();
                 } else {
                     document.getElementById('cardArea').innerHTML = `<h3>لا توجد صور بحاجة للمراجعة حالياً.</h3>`;
                 }
             } catch (e) {
                 console.error("خطأ في تحميل البيانات:", e);
             }
+        }
+
+        function updateAccuracyHUD() {
+            if (!reviewItems || reviewItems.length === 0) return;
+            const reviewed = reviewItems.filter(i => i.reviewed);
+            const exact = reviewItems.filter(i => i.reviewed && i.accuracy_status === 'correct');
+            const modified = reviewItems.filter(i => i.reviewed && i.accuracy_status === 'modified');
+            const pending = reviewItems.length - reviewed.length;
+
+            const validCount = exact.length + modified.length;
+            const pct = validCount > 0 ? ((exact.length / validCount) * 100).toFixed(1) : '--';
+
+            document.getElementById('accPct').innerText = pct === '--' ? '--%' : `${pct}%`;
+            document.getElementById('accExact').innerText = exact.length;
+            document.getElementById('accModified').innerText = modified.length;
+            document.getElementById('accReviewed').innerText = `${reviewed.length} / ${reviewItems.length}`;
+            document.getElementById('accPending').innerText = pending;
         }
 
         function renderItem(idx) {
@@ -667,7 +839,8 @@
                     : (cIdx === item.chars.length - 1 ? `حرف (أقصى اليمين)` : `حرف`);
 
                 stripHtml += `
-                    <div class="char-box-card" onclick="openPicker(${cIdx})" title="الخانة ${cIdx + 1} بالصورة">
+                    <div class="char-box-card" onclick="openPicker(${cIdx})" title="الخانة ${cIdx + 1} بالصورة (اضغط لتعديل الحرف)">
+                        <button class="char-delete-btn" onclick="deleteChar(event, ${cIdx})" title="حذف هذا الصندوق الزائد (صندوق وهمي)">✖</button>
                         <span class="char-glyph" style="color: ${c.is_digit ? '#38bdf8' : '#4ade80'};">${c.arabic || c.name}</span>
                         <span class="char-pos-label">خانة ${cIdx + 1}</span>
                         <span class="char-edit-badge">تعديل ✏️</span>
@@ -675,18 +848,28 @@
                 `;
             });
 
+            stripHtml += `
+                <button class="btn-add-char" onclick="openAddCharModal()" title="إضافة خانة مفقودة سقطت من الموديل">
+                    ➕ إضافة خانة
+                </button>
+            `;
+
             strip.innerHTML = stripHtml;
 
             const pct = ((idx + 1) / reviewItems.length) * 100;
             document.getElementById('progressBar').style.width = `${pct}%`;
         }
 
+        let isAddingChar = false;
+
         function openPicker(charIdx) {
+            isAddingChar = false;
             selectedCharIndex = charIdx;
             const item = reviewItems[currentIndex];
             const c = item.chars[charIdx];
 
             document.getElementById('pickerHeaderTitle').innerText = `تعديل الخانة رقم ${charIdx + 1} [${c.arabic || c.name}]:`;
+            document.getElementById('pickerDeleteSec').style.display = 'block';
             
             // تسليط الضوء على القسم المناسب (أرقام أو حروف)
             if (c.is_digit) {
@@ -700,16 +883,97 @@
             document.getElementById('pickerModal').classList.add('active');
         }
 
+        function openAddCharModal() {
+            isAddingChar = true;
+            selectedCharIndex = -1;
+            document.getElementById('pickerHeaderTitle').innerText = "اختر الحرف أو الرقم لإضافته كخانة جديدة:";
+            document.getElementById('pickerDeleteSec').style.display = 'none';
+            document.getElementById('pickerDigitsSection').style.display = 'block';
+            document.getElementById('pickerLettersSection').style.display = 'block';
+            document.getElementById('pickerModal').classList.add('active');
+        }
+
         function closePicker() {
             document.getElementById('pickerModal').classList.remove('active');
             selectedCharIndex = -1;
+            isAddingChar = false;
         }
 
         function closePickerOnOverlay(e) {
             if (e.target.id === 'pickerModal') closePicker();
         }
 
+        async function deleteChar(event, charIdx) {
+            if (event) event.stopPropagation();
+            if (charIdx < 0 || currentIndex < 0) return;
+            const item = reviewItems[currentIndex];
+            if (item.chars.length <= 1) {
+                alert("لا يمكن حذف الخانة الوحيدة المتبقية!");
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/review/delete_char', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        filename: item.filename,
+                        char_index: charIdx
+                    })
+                });
+                const data = await res.json();
+                if (data.success && data.updated_item) {
+                    reviewItems[currentIndex] = data.updated_item;
+                    reviewItems[currentIndex].is_modified = true;
+                    reviewItems[currentIndex].accuracy_status = 'modified';
+                    renderItem(currentIndex);
+                    updateAccuracyHUD();
+                    showToast(`🗑️ تم حذف الخانة الزائدة وتحديث اللوحة بنجاح!`);
+                }
+            } catch (e) {
+                alert("خطأ أثناء حذف الخانة: " + e);
+            }
+        }
+
+        async function deleteSelectedChar() {
+            if (selectedCharIndex >= 0) {
+                const idx = selectedCharIndex;
+                closePicker();
+                await deleteChar(null, idx);
+            }
+        }
+
         async function applyCharCorrection(newChar) {
+            if (isAddingChar) {
+                isAddingChar = false;
+                closePicker();
+                const item = reviewItems[currentIndex];
+                const isDigit = OFFICIAL_DIGITS.includes(newChar);
+                try {
+                    const res = await fetch('/api/review/add_char', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            filename: item.filename,
+                            char_name: newChar,
+                            is_digit: isDigit
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.success && data.updated_item) {
+                        reviewItems[currentIndex] = data.updated_item;
+                        reviewItems[currentIndex].is_modified = true;
+                        reviewItems[currentIndex].accuracy_status = 'modified';
+                        renderItem(currentIndex);
+                        updateAccuracyHUD();
+                        showToast(`➕ تم إضافة الخانة [${newChar}] بنجاح وحفظ ملف YOLO!`);
+                    }
+                } catch (e) {
+                    alert("خطأ أثناء إضافة الخانة: " + e);
+                }
+                return;
+            }
+
             if (selectedCharIndex < 0 || currentIndex < 0) return;
             const item = reviewItems[currentIndex];
             const charIdx = selectedCharIndex;
@@ -730,7 +994,10 @@
                 const data = await res.json();
                 if (data.success && data.updated_item) {
                     reviewItems[currentIndex] = data.updated_item;
+                    reviewItems[currentIndex].is_modified = true;
+                    reviewItems[currentIndex].accuracy_status = 'modified';
                     renderItem(currentIndex);
+                    updateAccuracyHUD();
                     showToast(`✅ تم تعديل الخانة ${charIdx + 1} إلى [${newChar}] وحفظ ملف YOLO .txt على القرص فوراً!`);
                 } else {
                     alert("تعذر حفظ التعديل على القرص.");
@@ -748,19 +1015,31 @@
         }
 
         function confirmCurrentPlate() {
+            const item = reviewItems[currentIndex];
+            item.reviewed = true;
+            if (!item.is_modified) {
+                item.accuracy_status = 'correct';
+            } else {
+                item.accuracy_status = 'modified';
+            }
+            updateAccuracyHUD();
             fetch('/api/review/confirm', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ filename: reviewItems[currentIndex].filename, action: 'confirm' })
+                body: JSON.stringify({ filename: item.filename, action: 'confirm' })
             });
             nextPlate();
         }
 
         function discardCurrentPlate() {
+            const item = reviewItems[currentIndex];
+            item.reviewed = true;
+            item.accuracy_status = 'discarded';
+            updateAccuracyHUD();
             fetch('/api/review/confirm', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ filename: reviewItems[currentIndex].filename, action: 'discard' })
+                body: JSON.stringify({ filename: item.filename, action: 'discard' })
             });
             nextPlate();
         }

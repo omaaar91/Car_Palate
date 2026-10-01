@@ -18,6 +18,8 @@ from core.deskew import deskew_adaptive
 from core.config import CHAR_MAP, DIGITS_SET, CLASS_WEIGHTS, OFFICIAL_ALLOWED_LETTERS
 from core.verification import (
     validate_egyptian_syntax,
+    suppress_duplicate_slots,
+    prune_spurious_boxes,
     verify_digit_geometry,
     verify_letter_geometry
 )
@@ -56,7 +58,11 @@ def process_single_vehicle(img_path):
     bx1, by1, bx2, by2 = map(int, best_pbox.xyxy[0])
     p_conf = float(best_pbox.conf[0])
     
-    crop = orig_img[by1:by2, bx1:bx2]
+    bw_plate, bh_plate = bx2 - bx1, by2 - by1
+    pad_x = int(bw_plate * 0.04)
+    pad_y = int(bh_plate * 0.05)
+    img_h, img_w = orig_img.shape[:2]
+    crop = orig_img[max(0, by1 - pad_y):min(img_h, by2 + pad_y), max(0, bx1 - pad_x):min(img_w, bx2 + pad_x)]
     if crop.shape[0] < 12 or crop.shape[1] < 25:
         return None, "لوحة صغيرة جداً", False, "غير محدد", 0.0
 
@@ -71,13 +77,20 @@ def process_single_vehicle(img_path):
     scale2 = pass2.shape[1] / w_tot
 
     # -------------------------------------------------------------
-    # الموديل 2: كشف مواضع الخانات والمحارف المادية (Slot Localization)
+    # الموديل 2: كشف مواضع الخانات والمحارف المادية مع إلغاء التكرار
     # -------------------------------------------------------------
     l_res = loc_model(pass1, conf=0.14, verbose=False)[0]
-    raw_b = sorted([list(map(int, bx.xyxy[0][:4])) for bx in l_res.boxes], key=lambda x: x[0])
+    raw_b = []
+    for bx in l_res.boxes:
+        coords = list(map(int, bx.xyxy[0][:4]))
+        coords.append(float(bx.conf[0]))
+        raw_b.append(coords)
+
+    # إلغاء الصناديق المتداخلة لنفس الخانة (Duplicate Slot Suppression)
+    suppressed_b = suppress_duplicate_slots(raw_b, iou_thresh=0.35)
 
     clean_b = []
-    for bx in raw_b:
+    for bx in suppressed_b:
         bw = bx[2] - bx[0]
         bh = bx[3] - bx[1]
         if bx[0] < (w_tot * 0.04) and bx[0] <= 8: continue
@@ -100,6 +113,28 @@ def process_single_vehicle(img_path):
     for cb in c2.boxes:
         coords = [float(cb.xyxy[0][0])/scale2, float(cb.xyxy[0][1])/scale2, float(cb.xyxy[0][2])/scale2, float(cb.xyxy[0][3])/scale2]
         candidates.append((coords, recog_model.names[int(cb.cls[0])], float(cb.conf[0]) * 0.95))
+
+    # استرجاع أي خانة واضحة ومؤكدة سقطت من الموديل 2 ورصدها الموديل 3 بثقة عالية
+    for (cx1, cy1, cx2, cy2), cname, raw_c in candidates:
+        if raw_c > 0.40 and len(clean_b) < 7:
+            cw = cx2 - cx1
+            ccx = (cx1 + cx2) / 2.0
+            has_overlap = False
+            for bx in clean_b:
+                inter = max(0, min(bx[2], cx2) - max(bx[0], cx1))
+                union = max(bx[2], cx2) - min(bx[0], cx1)
+                iou = inter / union if union > 0 else 0
+                bcx = (bx[0] + bx[2]) / 2.0
+                bw = bx[2] - bx[0]
+                if iou > 0.15 or abs(bcx - ccx) < min(bw, cw) * 0.55:
+                    has_overlap = True
+                    break
+            if not has_overlap and cx1 > (w_tot * 0.03) and cx2 < (w_tot * 0.98):
+                clean_b.append([int(cx1), int(cy1), int(cx2), int(cy2)])
+    clean_b.sort(key=lambda b: b[0])
+
+    # تنقية الصناديق الزائفة
+    clean_b = prune_spurious_boxes(clean_b, candidates, pass1.shape[1], pass1.shape[0])
 
     # بدون أي شرط مسبق على عدد الحروف أو الأرقام في كل جهة:
     # كل خانة تختار تصنيفها الطبيعي الحر وفق أعلى تطابق وثقة
