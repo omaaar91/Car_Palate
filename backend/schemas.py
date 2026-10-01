@@ -14,6 +14,7 @@ class PlateResult(BaseModel):
     confidence: float
     bbox: List[int]
     angle: float
+    track_id: Optional[int] = None
     char_details: Optional[List[CharBoxDetail]] = None
     syntax_valid: Optional[bool] = None
     governorate: Optional[str] = None

@@ -790,10 +790,11 @@
                     ctx.fillRect(bx + bw - cLen, by + bh - 4, cLen, 4);
                     ctx.fillRect(bx + bw - 4, by + bh - cLen, 4, cLen);
 
-                    // 2. رسم شريط القراءة فوق اللوحة مباشرة
+                    // 2. رسم شريط القراءة فوق اللوحة مباشرة مع معرّف التتبع ByteTrack
+                    const tidPrefix = (plate.track_id != null) ? `[#${plate.track_id}] ` : '';
                     const textLabel = isBL 
                         ? `🚨 مطلوبة: ${plate.blacklist_reason || plate.badge}` 
-                        : (plate.badge || plate.text || "Plate");
+                        : (tidPrefix + (plate.badge || plate.text || "Plate"));
                     
                     ctx.font = "bold 15px Cairo";
                     const tWidth = ctx.measureText(textLabel).width;

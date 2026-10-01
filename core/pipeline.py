@@ -340,12 +340,22 @@ class EgyptianALPR:
             "badge": syntax_info["badge"]
         }
 
-    def process_image(self, image: np.ndarray, add_hud: bool = True) -> dict:
+    def process_image(self, image: np.ndarray, add_hud: bool = True, track: bool = False) -> dict:
         """
         المعالجة الكاملة للصورة (أو إطار الفيديو): كشف مكان اللوحة، قراءة المحارف، وإضافة الـ HUD الزووم
+        track: تفعيل خوارزمية ByteTrack للتتبع اللحظي السريع عبر الفريمات
         """
         img_h, img_w = image.shape[:2]
-        p_res = self.plate_model(image, conf=PLATE_CONF, device=self.device, verbose=False)[0]
+        if track:
+            try:
+                p_res = self.plate_model.track(
+                    image, conf=PLATE_CONF, device=self.device, 
+                    persist=True, tracker="bytetrack.yaml", verbose=False
+                )[0]
+            except Exception:
+                p_res = self.plate_model(image, conf=PLATE_CONF, device=self.device, verbose=False)[0]
+        else:
+            p_res = self.plate_model(image, conf=PLATE_CONF, device=self.device, verbose=False)[0]
 
         annotated_frame = image.copy()
         plates_output = []
@@ -411,8 +421,10 @@ class EgyptianALPR:
                 if img_w >= 360 and img_h >= 200:
                     annotated_frame[20:20 + hud_h, 20:20 + hud_w] = hud_canvas
 
+            tid = int(box.id[0]) if (box.id is not None) else None
             plates_output.append({
                 "bbox": [x1, y1, x2, y2],
+                "track_id": tid,
                 "confidence": conf,
                 "text": plate_text,
                 "digits": recog_res["digits"],

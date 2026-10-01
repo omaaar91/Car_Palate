@@ -121,6 +121,7 @@ async def predict_image(
             confidence=p["confidence"],
             bbox=p["bbox"],
             angle=p["angle"],
+            track_id=p.get("track_id"),
             char_details=p.get("char_details"),
             syntax_valid=p.get("syntax_valid"),
             governorate=p.get("governorate"),
@@ -707,29 +708,33 @@ class TemporalPlateStabilizer:
         # تنظيف اللوحات التي اختفت لأكثر من 1.8 ثانية
         expired = [tid for tid, t in self.last_seen.items() if curr_time - t > 1.8]
         for tid in expired:
-            del self.tracks[tid]
-            del self.last_seen[tid]
+            self.tracks.pop(tid, None)
+            self.last_seen.pop(tid, None)
 
         stabilized_plates = []
         for p in plates:
-            bx1, by1, bx2, by2 = p["bbox"]
-            bcx, bcy = (bx1 + bx2) / 2.0, (by1 + by2) / 2.0
-
-            # ربط اللوحة بأقرب مسار سابق عبر المسافة المكانية
             matched_tid = None
-            min_dist = float("inf")
-            for tid, hist in self.tracks.items():
-                if not hist: continue
-                last_p = hist[-1]
-                lx1, ly1, lx2, ly2 = last_p["bbox"]
-                lcx, lcy = (lx1 + lx2) / 2.0, (ly1 + ly2) / 2.0
-                dist = ((bcx - lcx)**2 + (bcy - lcy)**2)**0.5
-                if dist < 85 and dist < min_dist:
-                    min_dist = dist
-                    matched_tid = tid
+            # إذا توفر Track ID مباشر من خوارزمية ByteTrack המعتمدة
+            if p.get("track_id") is not None:
+                matched_tid = f"byte_{p['track_id']}"
+            else:
+                bx1, by1, bx2, by2 = p["bbox"]
+                bcx, bcy = (bx1 + bx2) / 2.0, (by1 + by2) / 2.0
+                min_dist = float("inf")
+                for tid, hist in self.tracks.items():
+                    if not hist: continue
+                    last_p = hist[-1]
+                    lx1, ly1, lx2, ly2 = last_p["bbox"]
+                    lcx, lcy = (lx1 + lx2) / 2.0, (ly1 + ly2) / 2.0
+                    dist = ((bcx - lcx)**2 + (bcy - lcy)**2)**0.5
+                    if dist < 85 and dist < min_dist:
+                        min_dist = dist
+                        matched_tid = tid
 
             if matched_tid is None:
                 matched_tid = f"tr_{int(curr_time*1000)%10000}_{len(self.tracks)}"
+
+            if matched_tid not in self.tracks:
                 self.tracks[matched_tid] = deque(maxlen=self.history_len)
 
             self.last_seen[matched_tid] = curr_time
@@ -780,9 +785,15 @@ class TemporalPlateStabilizer:
         return stabilized_plates
 
 def process_live_frame_dict(frame: np.ndarray, stabilizer: TemporalPlateStabilizer, engine, db) -> dict:
-    """معالجة فريم حي مباشر من الكاميرا مع التثبيت الزمني وفحص القائمة السوداء"""
+    """معالجة فريم حي مباشر من الكاميرا مع التثبيت الزمني وفحص القائمة السوداء باستخدام ByteTrack"""
     h, w = frame.shape[:2]
-    p_res = engine.plate_model(frame, conf=0.35, device=engine.device, verbose=False)[0]
+    try:
+        p_res = engine.plate_model.track(
+            frame, conf=0.35, device=engine.device, persist=True, tracker="bytetrack.yaml", verbose=False
+        )[0]
+    except Exception:
+        p_res = engine.plate_model(frame, conf=0.35, device=engine.device, verbose=False)[0]
+
     raw_plates = []
     for b in p_res.boxes:
         x1, y1, x2, y2 = map(int, b.xyxy[0])
@@ -793,11 +804,13 @@ def process_live_frame_dict(frame: np.ndarray, stabilizer: TemporalPlateStabiliz
         pad_y = int(bh * 0.05)
         crop = frame[max(0, y1 - pad_y):min(h, y2 + pad_y), max(0, x1 - pad_x):min(w, x2 + pad_x)]
         rec = engine.recognize_plate_crop(crop)
+        tid = int(b.id[0]) if (b.id is not None) else None
         raw_plates.append({
             "text": rec["text"],
             "digits": rec["digits"],
             "letters": rec["letters"],
             "bbox": [x1, y1, x2, y2],
+            "track_id": tid,
             "conf": round(float(b.conf[0]), 2),
             "syntax_valid": rec.get("syntax_valid", False),
             "governorate": rec.get("governorate", "غير محدد"),
