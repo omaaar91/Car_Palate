@@ -19,12 +19,21 @@ def deskew_adaptive(crop: np.ndarray) -> tuple[np.ndarray, float]:
     
     rot_angle = -(90 - angle) if rw < rh else angle
     
-    # تصحيح الزاوية إذا كانت بين 1.8 و 32 درجة
+    # تصحيح الزاوية إذا كانت بين 1.8 و 32 درجة مع توسيع الكانفاس لحماية الحروف الطرفية
     if abs(rot_angle) > 1.8 and abs(rot_angle) < 32:
-        M = cv2.getRotationMatrix2D((w // 2, h // 2), rot_angle, 1.0)
+        rad = np.radians(rot_angle)
+        sin_a = abs(np.sin(rad))
+        cos_a = abs(np.cos(rad))
+        new_w = int((h * sin_a) + (w * cos_a))
+        new_h = int((h * cos_a) + (w * sin_a))
+
+        M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), rot_angle, 1.0)
+        M[0, 2] += (new_w / 2.0) - (w / 2.0)
+        M[1, 2] += (new_h / 2.0) - (h / 2.0)
+
         deskewed = cv2.warpAffine(
-            crop, M, (w, h), 
-            flags=cv2.INTER_CUBIC, 
+            crop, M, (new_w, new_h), 
+            flags=cv2.INTER_LINEAR, 
             borderMode=cv2.BORDER_REPLICATE
         )
         return deskewed, rot_angle

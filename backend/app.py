@@ -782,14 +782,16 @@ class TemporalPlateStabilizer:
 def process_live_frame_dict(frame: np.ndarray, stabilizer: TemporalPlateStabilizer, engine, db) -> dict:
     """معالجة فريم حي مباشر من الكاميرا مع التثبيت الزمني وفحص القائمة السوداء"""
     h, w = frame.shape[:2]
-    p_res = engine.plate_model(frame, conf=0.35, verbose=False)[0]
+    p_res = engine.plate_model(frame, conf=0.35, device=engine.device, verbose=False)[0]
     raw_plates = []
     for b in p_res.boxes:
         x1, y1, x2, y2 = map(int, b.xyxy[0])
         bw, bh = x2 - x1, y2 - y1
         if bw < 42 or bh < 14:
             continue
-        crop = frame[y1:y2, x1:x2]
+        pad_x = int(bw * 0.05)
+        pad_y = int(bh * 0.05)
+        crop = frame[max(0, y1 - pad_y):min(h, y2 + pad_y), max(0, x1 - pad_x):min(w, x2 + pad_x)]
         rec = engine.recognize_plate_crop(crop)
         raw_plates.append({
             "text": rec["text"],

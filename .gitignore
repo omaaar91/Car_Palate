@@ -16,6 +16,7 @@ key.pem
 
 # Media outputs and caches
 output_*.mp4
+merged_*.mp4
 crop_*_inspect.jpg
 test_tahoma.png
 *_backup.pt
@@ -24,6 +25,7 @@ test_tahoma.png
 *.MOV
 *.mov
 *.mp4
+*.MP4
 frame_sample_*.jpg
 side_by_side_comparison.jpg
 benchmark_result_*.txt
